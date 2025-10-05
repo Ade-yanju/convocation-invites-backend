@@ -1,0 +1,38 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Student {
+  id          Int      @id @default(autoincrement())
+  matricNo    String   @unique
+  studentName String
+  phone       String?
+  guests      Guest[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Guest {
+  id        Int      @id @default(autoincrement())
+  student   Student  @relation(fields: [studentId], references: [id])
+  studentId Int
+  guestName String
+  phone     String
+  token     String   @unique
+  qrPngDataUrl String?
+  pdfPath   String?
+  pngPath   String?
+  // Use a simple string for status so SQLite works reliably:
+  status    String   @default("UNUSED")
+  sentAt    DateTime?
+  usedAt    DateTime?
+  usedBy    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
