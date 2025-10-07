@@ -1,76 +1,47 @@
-// server/src/middleware/requireAdmin.js
 import admin from "../firebaseAdmin.js";
 import { config } from "../config.js";
 
-/**
- * requireAdmin
- * - Allows OPTIONS through (so CORS preflight isn't blocked)
- * - Extracts Bearer token from Authorization header and verifies via firebase-admin
- * - Two ways to allow an admin:
- *    1) ADMIN_EMAILS env (comma separated) — e.g. "you@school.edu,other@du.edu"
- *    2) Custom claim or decoded.role === "admin" (set as Firebase custom claim)
- *
- * Returns 401 or 403 with JSON for API routes.
- */
-
 export async function requireAdmin(req, res, next) {
   try {
-    // Allow preflight
-    if (req.method === "OPTIONS") return next();
+    const h = req.headers.authorization || "";
+    const token = h.startsWith("Bearer ") ? h.slice(7) : null;
+    if (!token)
+      return res.status(401).json({ ok: false, error: "Missing token" });
 
-    const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-
-    if (!token) {
+    if (!admin || !admin.auth) {
       return res
-        .status(401)
-        .json({ ok: false, error: "Missing Authorization token" });
+        .status(500)
+        .json({ ok: false, error: "Server auth not configured" });
     }
 
-    // Verify ID token with firebase-admin
-    let decoded;
-    try {
-      decoded = await admin.auth().verifyIdToken(token, true);
-    } catch (err) {
-      console.error("requireAdmin: token verify failed", err?.message || err);
-      return res.status(401).json({ ok: false, error: "Invalid token" });
-    }
+    const decoded = await admin.auth().verifyIdToken(token, true);
+    req.user = decoded;
 
-    // Allowlist from env (highest priority)
-    const allowed = (process.env.ADMIN_EMAILS || config.ADMIN_EMAILS || "")
+    // allowlist emails OR custom claim (role/admin)
+    const allowed = (config.ADMIN_EMAILS || "")
       .split(",")
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
 
-    const userEmail = (decoded.email || "").toLowerCase();
-    const hasAllowlist = allowed.length > 0;
+    const email = (decoded.email || "").toLowerCase();
+    const isAdminClaim = decoded.role === "admin" || decoded.admin === true;
 
-    // If custom claim was set (e.g., via Firebase admin SDK), allow it too
-    const isAdminClaim = decoded.admin === true || decoded.role === "admin";
-
-    if (hasAllowlist) {
-      if (!allowed.includes(userEmail)) {
+    if (allowed.length > 0) {
+      if (!allowed.includes(email))
         return res
           .status(403)
           .json({
             ok: false,
             error: "Not authorized (email not in allowlist)",
           });
-      }
     } else {
-      // no allowlist configured — require admin claim
-      if (!isAdminClaim) {
-        return res
-          .status(403)
-          .json({ ok: false, error: "Not authorized (missing admin claim)" });
-      }
+      if (!isAdminClaim)
+        return res.status(403).json({ ok: false, error: "Not authorized" });
     }
 
-    // Attach decoded token to request for downstream handlers
-    req.user = decoded;
-    return next();
+    next();
   } catch (e) {
-    console.error("requireAdmin unexpected error:", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
+    console.error("requireAdmin error:", e);
+    return res.status(401).json({ ok: false, error: "Invalid token" });
   }
 }

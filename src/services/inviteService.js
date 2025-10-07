@@ -1,15 +1,13 @@
-// server/src/services/inviteService.js
 import dayjs from "dayjs";
 import { customAlphabet } from "nanoid";
 import { prisma } from "../db.js";
 import { qrDataUrlFromToken } from "./qrService.js";
 import { buildInvitePDFBuffer, saveBufferToCloudinary } from "./pdfService.js";
 import { config } from "../config.js";
-import { toE164 } from "../utils/phone.js";
+import { toE164 } from "../utils/phone.js"; // optional helper present below
 
 const nano = customAlphabet("abcdefghijkmnpqrstuvwxyz23456789", 12);
 
-/* ---------- WhatsApp caption ---------- */
 function buildCaption({ guestName, link }) {
   return `Hello ${guestName},
 
@@ -32,34 +30,14 @@ const waTextLink = (e164, text) => {
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 };
 
-/* ---------- Main ---------- */
-/**
- * createGuestsAndSave
- * - event: optional meta object (title, date, time, venue, notes)
- * - student: { matricNo, studentName, phone? }
- * - guests: [{ guestName, phone }]
- *
- * Returns: Array of result objects (one per guest). Each success result contains:
- *  { id, guestName, phone, phoneE164, token, filename, publicUrl, downloadUrl, caption, whatsappLink, cloudinaryPublicId }
- *
- * Failure entries include { guestName, phone, error } so UI can show which ones failed.
- */
 export async function createGuestsAndSave({
   event = config.EVENT,
   student,
   guests,
 }) {
-  if (!student || !student.matricNo || !student.studentName) {
-    throw new Error("student.matricNo and student.studentName are required");
-  }
-
-  // Upsert student (returns student row)
   const s = await prisma.student.upsert({
     where: { matricNo: student.matricNo },
-    update: {
-      studentName: student.studentName,
-      phone: student.phone ?? null,
-    },
+    update: { studentName: student.studentName, phone: student.phone ?? null },
     create: {
       matricNo: student.matricNo,
       studentName: student.studentName,
@@ -69,49 +47,29 @@ export async function createGuestsAndSave({
 
   const results = [];
 
-  // Process guests sequentially to reduce concurrent upload pressure.
-  // If you want speed you can parallelize with Promise.all but handle rate limits.
-  for (const g of guests || []) {
-    // basic validation
-    if (!g || !g.guestName || !g.phone) {
-      results.push({
-        guestName: g?.guestName || null,
-        phone: g?.phone || null,
-        error: "Missing guestName or phone",
-      });
-      continue;
-    }
-
-    // normalize & trim
-    const guestName = String(g.guestName).trim();
-    const phoneRaw = String(g.phone).trim();
-
+  for (const g of guests) {
+    if (!g?.guestName || !g?.phone) continue;
     try {
-      // 1) create token + QR data (we keep PNG data for audit)
       const token = nano();
       const qrPngDataUrl = await qrDataUrlFromToken(token);
 
-      // 2) render PDF buffer (embed token so QR encodes it)
       const pdfBuf = await buildInvitePDFBuffer({
         student: { matricNo: s.matricNo, studentName: s.studentName },
-        guest: { guestName },
-        meta: event,
+        guest: { guestName: g.guestName, phone: g.phone },
+        meta: { ...event, baseUrl: config.BASE_URL },
         token,
       });
 
-      // 3) upload the PDF to Cloudinary (raw)
       const uploaded = await saveBufferToCloudinary(pdfBuf, {
-        guest: { guestName, phone: phoneRaw },
+        guest: g,
         student: s,
       });
-      // uploaded = { cloudinaryPublicId, publicUrl, downloadUrl, filename }
 
-      // 4) create guest record (store cloudinary public id in pdfPath for compatibility)
       const guestRow = await prisma.guest.create({
         data: {
           studentId: s.id,
-          guestName,
-          phone: phoneRaw,
+          guestName: g.guestName.trim(),
+          phone: g.phone.trim(),
           token,
           qrPngDataUrl,
           pdfPath: uploaded.cloudinaryPublicId,
@@ -120,13 +78,13 @@ export async function createGuestsAndSave({
         },
       });
 
-      // 5) build whatsapp + caption (prefer downloadUrl for nicer filename)
       const phoneE164 = toE164(guestRow.phone, config.DEFAULT_COUNTRY);
-      const link = uploaded.downloadUrl || uploaded.publicUrl;
-      const caption = buildCaption({ guestName: guestRow.guestName, link });
+      const caption = buildCaption({
+        guestName: guestRow.guestName,
+        link: uploaded.downloadUrl || uploaded.publicUrl,
+      });
       const whatsappLink = phoneE164 ? waTextLink(phoneE164, caption) : "";
 
-      // 6) push result
       results.push({
         id: guestRow.id,
         guestName: guestRow.guestName,
@@ -141,17 +99,13 @@ export async function createGuestsAndSave({
         cloudinaryPublicId: uploaded.cloudinaryPublicId,
       });
     } catch (e) {
-      // keep other guests going — surface error for UI
       results.push({
-        guestName,
-        phone: phoneRaw,
-        error: e?.message || "Failed to generate/upload invite",
+        guestName: g.guestName,
+        phone: g.phone,
+        error: e?.message || "Failed",
       });
-      console.error("[createGuestsAndSave] guest error:", guestName, e);
     }
   }
 
   return results;
 }
-
-export default { createGuestsAndSave };

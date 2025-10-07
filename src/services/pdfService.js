@@ -1,4 +1,3 @@
-// server/src/services/pdfService.js
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import QRCode from "qrcode";
 import fs from "fs/promises";
@@ -7,68 +6,59 @@ import { v2 as cloudinary } from "cloudinary";
 import { PassThrough } from "stream";
 import { config } from "../config.js";
 
-// ----- Cloudinary config (ensure config.CLOUDINARY exists in your config.js/.env) -----
+if (!config.CLOUDINARY?.CLOUD_NAME) {
+  console.warn(
+    "Cloudinary not configured; saveBufferToCloudinary will fail if called."
+  );
+}
+
 cloudinary.config({
   cloud_name: config.CLOUDINARY?.CLOUD_NAME,
   api_key: config.CLOUDINARY?.API_KEY,
   api_secret: config.CLOUDINARY?.API_SECRET,
+  secure: true,
 });
 
-// ---------------------- buildInvitePDFBuffer ----------------------
-// Creates a polished invite PDF Buffer with logo, decorative background,
-// guest/student details and a large QR code for scanning.
 export async function buildInvitePDFBuffer({
   student = { matricNo: "", studentName: "" },
-  guest = { guestName: "", phone: "" },
+  guest = { guestName: "" },
   meta = {},
   token = "",
 }) {
-  // create doc & page (A4 landscape)
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([842, 595]); // width x height
+  const page = pdf.addPage([842, 595]); // landscape
 
   const width = page.getWidth();
   const height = page.getHeight();
 
-  // Colors
-  const navy = rgb(11 / 255, 46 / 255, 78 / 255); // #0B2E4E
-  const gold = rgb(212 / 255, 175 / 255, 55 / 255); // #D4AF37
+  const navy = rgb(11 / 255, 46 / 255, 78 / 255);
+  const gold = rgb(212 / 255, 175 / 255, 55 / 255);
   const deep = rgb(0.14, 0.16, 0.21);
   const textCol = rgb(0.06, 0.08, 0.14);
   const muted = rgb(0.45, 0.49, 0.55);
 
-  // Fonts (standard)
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const mono = await pdf.embedFont(StandardFonts.Courier);
 
-  // Attempt to embed decorative background image if present
+  // optional background
   try {
     const bgPath = path.join(process.cwd(), "server", "assets", "grad-bg.png");
     const bgStat = await fs.stat(bgPath).catch(() => null);
     if (bgStat) {
       const bgBytes = await fs.readFile(bgPath);
-      // assume PNG
       const bgImg = await pdf.embedPng(bgBytes);
-      // draw faint background across whole page (very light)
-      page.drawImage(bgImg, {
-        x: 0,
-        y: 0,
-        width,
-        height,
-        opacity: 0.12,
-      });
+      page.drawImage(bgImg, { x: 0, y: 0, width, height, opacity: 0.12 });
     }
-  } catch (e) {
-    // ignore missing background
-  }
+  } catch {}
 
-  // Draw a rounded white card in the center
+  // card
   const M = 28;
   const cardX = M;
   const cardY = M;
   const cardW = width - M * 2;
   const cardH = height - M * 2;
+
   page.drawRectangle({
     x: cardX,
     y: cardY,
@@ -77,10 +67,9 @@ export async function buildInvitePDFBuffer({
     color: rgb(1, 1, 1),
     borderColor: rgb(0.92, 0.92, 0.94),
     borderWidth: 0.8,
-    opacity: 1,
   });
 
-  // Header band (navy) with gold accents
+  // header band
   const bandH = 74;
   page.drawRectangle({
     x: cardX,
@@ -90,7 +79,7 @@ export async function buildInvitePDFBuffer({
     color: navy,
   });
 
-  // Logo embed (du-logo.png in server/assets)
+  // logo
   try {
     const logoPath = path.join(
       process.cwd(),
@@ -101,10 +90,8 @@ export async function buildInvitePDFBuffer({
     const logoStat = await fs.stat(logoPath).catch(() => null);
     if (logoStat) {
       const logoBytes = await fs.readFile(logoPath);
-      // detect PNG vs JPG by header
       let logoImage;
       const header = logoBytes.slice(0, 8);
-      // PNG signature: 89 50 4E 47
       if (header[0] === 0x89 && header[1] === 0x50) {
         logoImage = await pdf.embedPng(logoBytes);
       } else {
@@ -119,18 +106,19 @@ export async function buildInvitePDFBuffer({
         height: logoH,
       });
     }
-  } catch (e) {
-    // ignore logo issues
-  }
+  } catch {}
 
-  // Header text
-  page.drawText(meta.title || "Dominion University Convocation 2025", {
-    x: cardX + 120,
-    y: cardY + cardH - 32,
-    size: 18,
-    font: fontBold,
-    color: rgb(1, 1, 1),
-  });
+  // header text
+  page.drawText(
+    meta.title || config.EVENT.title || "Dominion University Convocation 2025",
+    {
+      x: cardX + 120,
+      y: cardY + cardH - 32,
+      size: 18,
+      font: fontBold,
+      color: rgb(1, 1, 1),
+    }
+  );
   page.drawText("Official Guest Invite", {
     x: cardX + 120,
     y: cardY + cardH - 52,
@@ -139,10 +127,9 @@ export async function buildInvitePDFBuffer({
     color: rgb(1, 1, 1),
   });
 
-  // Left column: main guest + student info
+  // left content
   const leftX = cardX + 28;
   let y = cardY + cardH - bandH - 30;
-
   page.drawText(guest.guestName || "Guest Name", {
     x: leftX,
     y,
@@ -151,7 +138,6 @@ export async function buildInvitePDFBuffer({
     color: textCol,
   });
   y -= 36;
-
   page.drawText(`For: ${student.studentName || "-"}`, {
     x: leftX,
     y,
@@ -160,7 +146,6 @@ export async function buildInvitePDFBuffer({
     color: deep,
   });
   y -= 22;
-
   page.drawText(`Matric No: ${student.matricNo || "-"}`, {
     x: leftX,
     y,
@@ -170,7 +155,7 @@ export async function buildInvitePDFBuffer({
   });
   y -= 26;
 
-  // Event info block
+  // event info box
   const infoBoxW = 420;
   const infoBoxH = 92;
   page.drawRectangle({
@@ -182,7 +167,6 @@ export async function buildInvitePDFBuffer({
     borderColor: rgb(0.94, 0.94, 0.96),
     borderWidth: 0.6,
   });
-
   const infoY = y - 14;
   page.drawText("DATE:", {
     x: leftX + 12,
@@ -191,14 +175,13 @@ export async function buildInvitePDFBuffer({
     font: fontBold,
     color: deep,
   });
-  page.drawText(meta.date || "-", {
+  page.drawText(meta.date || config.EVENT.date || "-", {
     x: leftX + 80,
     y: infoY,
     size: 11,
     font,
     color: deep,
   });
-
   page.drawText("TIME:", {
     x: leftX + 12,
     y: infoY - 20,
@@ -206,14 +189,13 @@ export async function buildInvitePDFBuffer({
     font: fontBold,
     color: deep,
   });
-  page.drawText(meta.time || "-", {
+  page.drawText(meta.time || config.EVENT.time || "-", {
     x: leftX + 80,
     y: infoY - 20,
     size: 11,
     font,
     color: deep,
   });
-
   page.drawText("VENUE:", {
     x: leftX + 12,
     y: infoY - 40,
@@ -221,7 +203,7 @@ export async function buildInvitePDFBuffer({
     font: fontBold,
     color: deep,
   });
-  page.drawText(meta.venue || "-", {
+  page.drawText(meta.venue || config.EVENT.venue || "-", {
     x: leftX + 80,
     y: infoY - 40,
     size: 10.5,
@@ -231,35 +213,31 @@ export async function buildInvitePDFBuffer({
   });
 
   y = y - infoBoxH - 6;
-
-  // Notes / instructions
   page.drawText(
-    meta.notes || "Please arrive 45 minutes early with a valid ID.",
-    {
-      x: leftX,
-      y: y - 8,
-      size: 9.5,
-      font,
-      color: muted,
-      maxWidth: infoBoxW,
-    }
+    meta.notes ||
+      config.EVENT.notes ||
+      "Please arrive 45 minutes early with a valid ID.",
+    { x: leftX, y: y - 8, size: 9.5, font, color: muted, maxWidth: infoBoxW }
   );
 
-  // Right column: QR and badge
+  // right: QR
   const qrBox = 220;
   const qrX = cardX + cardW - qrBox - 36;
   const qrY = cardY + 110;
 
-  // Generate QR payload (JSON with {t:token}) so scanner can parse
-  const qrPayload = JSON.stringify({ t: String(token) });
-  const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+  const baseUrl =
+    (meta && meta.baseUrl) || config.BASE_URL || "http://localhost:8080";
+  const verifyUrl = `${String(baseUrl).replace(
+    /\/$/,
+    ""
+  )}/verify/${encodeURIComponent(String(token))}`;
+  const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
     width: qrBox,
     margin: 1,
     errorCorrectionLevel: "M",
   });
   const qrImage = await pdf.embedPng(qrDataUrl);
 
-  // QR background panel
   page.drawRectangle({
     x: qrX - 10,
     y: qrY - 10,
@@ -271,7 +249,6 @@ export async function buildInvitePDFBuffer({
   });
   page.drawImage(qrImage, { x: qrX, y: qrY, width: qrBox, height: qrBox });
 
-  // Token preview under QR
   page.drawText(`Token: ${String(token).slice(0, 12)}…`, {
     x: qrX,
     y: qrY - 20,
@@ -280,14 +257,13 @@ export async function buildInvitePDFBuffer({
     color: muted,
   });
 
-  // gold "Single entry" badge above QR
+  // gold badge
   page.drawRectangle({
     x: qrX,
     y: qrY + qrBox + 12,
     width: 160,
     height: 36,
     color: gold,
-    opacity: 1,
   });
   page.drawText("SINGLE ENTRY • NON-TRANSFERABLE", {
     x: qrX + 10,
@@ -297,16 +273,7 @@ export async function buildInvitePDFBuffer({
     color: navy,
   });
 
-  // Footer: registrar signature / contact
-  page.drawText("Registrar • Dominion University", {
-    x: qrX - 10,
-    y: cardY + 22,
-    size: 10,
-    font: fontBold,
-    color: muted,
-  });
-
-  // small fine print at bottom-left
+  // footer
   page.drawText(
     "Please present this QR and a valid ID at the entrance. Keep this invite private.",
     {
@@ -319,27 +286,25 @@ export async function buildInvitePDFBuffer({
     }
   );
 
-  // save & return buffer
   const bytes = await pdf.save();
   return Buffer.from(bytes);
 }
 
-// ---------------------- saveBufferToCloudinary ----------------------
-// Uploads a PDF Buffer to Cloudinary as a RAW resource and returns info
 export async function saveBufferToCloudinary(buf, { guest, student }) {
   const safe = (s) =>
     String(s || "")
       .replace(/[^a-z0-9\-]+/gi, "_")
       .replace(/_+/g, "_");
-  const filename = `Invite_${safe(student.matricNo)}_${safe(guest.guestName)}`;
+  const base = `Invite_${safe(student.matricNo)}_${safe(guest.guestName)}`;
+  const folder = config.CLOUDINARY.FOLDER || "invites";
 
   const upload = () =>
     new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
-          folder: config.CLOUDINARY?.FOLDER || "invites",
-          public_id: filename,
-          resource_type: "raw", // important: store PDF as raw file
+          folder,
+          public_id: base,
+          resource_type: "raw",
           overwrite: true,
           use_filename: false,
           unique_filename: false,
@@ -352,15 +317,18 @@ export async function saveBufferToCloudinary(buf, { guest, student }) {
     });
 
   const result = await upload();
-  // return public_url / secure_url for linking
+  const downloadUrl = cloudinary.url(result.public_id, {
+    resource_type: "raw",
+    flags: `attachment:${base}.pdf`,
+    secure: true,
+  });
+
   return {
     cloudinaryPublicId: result.public_id,
     publicUrl: result.secure_url,
-    filename: `${filename}.pdf`,
+    downloadUrl,
+    filename: `${base}.pdf`,
   };
 }
 
-export default {
-  buildInvitePDFBuffer,
-  saveBufferToCloudinary,
-};
+export default { buildInvitePDFBuffer, saveBufferToCloudinary };

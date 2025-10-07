@@ -1,64 +1,59 @@
 import express from "express";
 import { prisma } from "../db.js";
+import { requireAdmin } from "../middleware/requireAdmin.js";
 
 const router = express.Router();
 
-// Check status
-router.post("/check", async (req, res) => {
+// check token info (protected)
+router.post("/check", requireAdmin, async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
-    if (!token)
-      return res.status(400).json({ ok: false, error: "token required" });
-    const guest = await prisma.guest.findUnique({
+    if (!token) return res.json({ ok: false, error: "token required" });
+    const g = await prisma.guest.findUnique({
       where: { token },
       include: { student: true },
     });
-    if (!guest) return res.status(404).json({ ok: false, error: "Not found" });
+    if (!g) return res.json({ ok: false, error: "Invalid token" });
     return res.json({
       ok: true,
-      status: guest.status,
-      usedAt: guest.usedAt || null,
-      guest: { guestName: guest.guestName },
-      student: {
-        studentName: guest.student?.studentName,
-        matricNo: guest.student?.matricNo,
-      },
+      status: g.status,
+      guest: { guestName: g.guestName, phone: g.phone },
+      student: g.student
+        ? { studentName: g.student.studentName, matricNo: g.student.matricNo }
+        : null,
+      usedAt: g.usedAt,
+      usedBy: g.usedBy,
     });
   } catch (e) {
-    console.error(e);
+    console.error("/verify-json/check err:", e);
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
-// Mark USED (atomic)
-router.post("/use", async (req, res) => {
+// mark USED (atomic)
+router.post("/use", requireAdmin, async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
-    if (!token)
-      return res.status(400).json({ ok: false, error: "token required" });
+    if (!token) return res.json({ ok: false, error: "token required" });
+    const email = req.user?.email || "admin";
     const updated = await prisma.guest.updateMany({
       where: { token, status: "UNUSED" },
-      data: { status: "USED", usedAt: new Date(), usedBy: "scanner" },
+      data: { status: "USED", usedAt: new Date(), usedBy: email },
     });
-    const guest = await prisma.guest.findUnique({
+    if (updated.count === 0) {
+      const g = await prisma.guest.findUnique({
+        where: { token },
+        include: { student: true },
+      });
+      return res.json({ ok: false, error: "Already used", guest: g });
+    }
+    const g = await prisma.guest.findUnique({
       where: { token },
       include: { student: true },
     });
-    if (!guest) return res.status(404).json({ ok: false, error: "Not found" });
-    const ok = updated.count > 0; // true if we actually flipped UNUSED->USED
-    return res.json({
-      ok: true,
-      status: guest.status,
-      usedAt: guest.usedAt || null,
-      guest: { guestName: guest.guestName },
-      student: {
-        studentName: guest.student?.studentName,
-        matricNo: guest.student?.matricNo,
-      },
-      changed: ok,
-    });
+    return res.json({ ok: true, guest: g });
   } catch (e) {
-    console.error(e);
+    console.error("/verify-json/use err:", e);
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });

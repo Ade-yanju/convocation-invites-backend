@@ -1,8 +1,11 @@
 import QRCode from "qrcode";
 
 export async function qrDataUrlFromToken(token) {
-  const payload = JSON.stringify({ t: token });
-  return QRCode.toDataURL(payload, { errorCorrectionLevel: "M", width: 512 });
+  if (!token) return null;
+  // small PNG for audit records
+  return await QRCode.toDataURL(JSON.stringify({ t: String(token) }), {
+    width: 200,
+    margin: 1,
+    errorCorrectionLevel: "M",
+  });
 }
-
-export default { qrDataUrlFromToken };
