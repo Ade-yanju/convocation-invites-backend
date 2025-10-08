@@ -3,8 +3,11 @@ dotenv.config();
 
 export const config = {
   PORT: process.env.PORT || 8080,
-  CORS_ORIGIN: process.env.CORS_ORIGIN || "http://localhost:3000",
-  BASE_URL: process.env.BASE_URL || `http://localhost:${process.env.PORT || 8080}`,
+  CORS_ORIGIN: (process.env.CORS_ORIGIN || "http://localhost:3000")
+    .split(",")
+    .map((origin) => origin.trim()),
+  BASE_URL:
+    process.env.BASE_URL || `http://localhost:${process.env.PORT || 8080}`,
   DATABASE_URL: process.env.DATABASE_URL,
   FIREBASE_ADMIN_JSON: process.env.FIREBASE_ADMIN_JSON,
   FIREBASE_ADMIN_PATH: process.env.FIREBASE_ADMIN_PATH,
