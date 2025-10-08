@@ -12,6 +12,12 @@ import { config } from "./config.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+// ✅ Configure allowed origins
+const allowedOrigins = [
+  "http://localhost:3000", // local dev
+  "https://duqrinvitesevents.vercel.app", // your deployed frontend
+];
+
 // IMPORTANT: set credentials:true only if client uses fetch with credentials: 'include'.
 // We recommend using Authorization Bearer tokens (Firebase id token) instead of cookies.
 // If you use cookies, ensure config.CORS_ORIGIN is exact origin (no '*').
