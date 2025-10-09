@@ -1,82 +1,101 @@
 // server/src/routes/admin.js
 import express from "express";
+import crypto from "crypto";
+import { prisma } from "../db.js";
+import { requireAdmin } from "../middleware/requireAdmin.js";
+import { generatePdfBufferForInvite } from "../pdfWithQr.js";
+import uploadBufferToCloudinary from "../cloudinary.js";
+
 const router = express.Router();
-import { generateInvitePdfBuffer } from "../utils/generatePdf.js";
-import { uploadBufferToCloudinary } from "../cloudinary.js";
-import { config } from "../config.js";
 
-/**
- * POST /admin/students
- * body: { event, student, guests: [{ guestName, phone }] }
- *
- * This route:
- *  - generates a PDF per guest (awaits generation),
- *  - uploads the PDF to Cloudinary (awaits upload),
- *  - returns array of files with publicUrl and downloadUrl (server proxy).
- *
- * Note: You should add authentication middleware (requireAdmin) here.
- */
-router.post("/students", async (req, res) => {
+function makeToken() {
+  return crypto.randomBytes(10).toString("hex");
+}
+
+router.post("/students", requireAdmin, async (req, res) => {
   try {
-    const payload = req.body || {};
-    const { event = {}, student = {}, guests = [] } = payload;
-
-    if (!student.matricNo || !student.studentName) {
+    const { event = {}, student = {}, guests = [] } = req.body;
+    if (!student?.matricNo || !student?.studentName) {
       return res
         .status(400)
         .json({ ok: false, error: "Missing student details" });
     }
-    if (!Array.isArray(guests) || guests.length === 0) {
-      return res.status(400).json({ ok: false, error: "No guests provided" });
-    }
+
+    // Upsert student by matricNo (assumes matricNo is unique)
+    const studentRecord = await prisma.student.upsert({
+      where: { matricNo: student.matricNo },
+      update: { studentName: student.studentName, phone: student.phone || "" },
+      create: {
+        matricNo: student.matricNo,
+        studentName: student.studentName,
+        phone: student.phone || "",
+      },
+    });
+
+    // ensure guests array
+    const guestsArr = Array.isArray(guests) ? guests : [guests];
 
     const files = [];
-    for (const guest of guests) {
-      // create a token (unique per invite)
-      const token = `t_${Date.now().toString(36)}_${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
+    for (const g of guestsArr) {
+      const token = makeToken();
 
-      // 1) Generate PDF buffer (await)
-      const pdfBuffer = await generateInvitePdfBuffer({
-        event,
-        student,
-        guest,
-        token,
+      // create guest row with token and UNUSED status
+      const guestRecord = await prisma.guest.create({
+        data: {
+          guestName: g.guestName || "Guest",
+          phone: g.phone || "",
+          token,
+          status: "UNUSED",
+          studentId: studentRecord.id,
+        },
       });
 
-      // 2) Upload to Cloudinary (await)
-      const filename = `${student.matricNo}_${(
-        guest.guestName || "guest"
-      ).replace(/\s+/g, "_")}.pdf`;
-      const uploadOpts = {
-        public_id: `invites/${student.matricNo}_${token}`,
-        resource_type: "auto",
+      // prepare invite object for PDF generation
+      const invite = {
+        studentName: studentRecord.studentName,
+        matricNo: studentRecord.matricNo,
+        guestName: guestRecord.guestName,
+        phone: guestRecord.phone,
+        event,
+        token,
       };
-      const uploadResult = await uploadBufferToCloudinary(
-        pdfBuffer,
-        uploadOpts
-      );
 
-      if (!uploadResult || !uploadResult.secure_url) {
-        throw new Error("Upload failed");
+      // generate PDF buffer with QR embedded
+      const pdfBuffer = await generatePdfBufferForInvite(invite);
+      const filename = `${studentRecord.matricNo}_${
+        guestRecord.guestName || "guest"
+      }_${token}.pdf`.replace(/\s+/g, "_");
+
+      // upload to Cloudinary (raw)
+      let uploadInfo = { publicUrl: "", secure_url: "" };
+      try {
+        uploadInfo = await uploadBufferToCloudinary(pdfBuffer, {
+          folder: process.env.CLOUDINARY_FOLDER || "invites",
+          filename,
+        });
+      } catch (err) {
+        console.error("cloud upload failed for", filename, err);
+        // do not abort entire batch — attach empty URL and continue
       }
 
-      const publicUrl = uploadResult.secure_url;
-      // Create a server-proxied download URL (so client can fetch /admin/download?url=...)
-      const base = config.PUBLIC_API_BASE || `http://localhost:${config.PORT}`;
-      const downloadUrl = `${base}/admin/download?url=${encodeURIComponent(
-        publicUrl
-      )}&filename=${encodeURIComponent(filename)}`;
+      // update guest record with URL info (if cloud upload succeeded)
+      if (uploadInfo?.publicUrl) {
+        await prisma.guest.update({
+          where: { id: guestRecord.id },
+          data: {
+            publicUrl: uploadInfo.publicUrl,
+            filename,
+          },
+        });
+      }
 
       files.push({
-        guestName: guest.guestName,
-        phone: guest.phone,
         token,
-        publicUrl,
-        downloadUrl,
+        guestName: guestRecord.guestName,
+        phone: guestRecord.phone,
         filename,
-        id: uploadResult.public_id || null,
+        publicUrl: uploadInfo.publicUrl || "",
+        downloadUrl: uploadInfo.publicUrl || "",
       });
     }
 

@@ -1,47 +1,57 @@
-import admin from "../firebaseAdmin.js";
+// server/src/middleware/requireAdmin.js
+import admin from "../firebaseAdmin.js"; // your firebase-admin initializer
 import { config } from "../config.js";
 
+/**
+ * requireAdmin - verifies Firebase ID token from Authorization: Bearer <token>
+ * - returns 401 if missing/invalid token
+ * - returns 403 if email not in ADMIN_EMAILS
+ * - logs errors but does not throw
+ */
 export async function requireAdmin(req, res, next) {
   try {
-    const h = req.headers.authorization || "";
-    const token = h.startsWith("Bearer ") ? h.slice(7) : null;
-    if (!token)
-      return res.status(401).json({ ok: false, error: "Missing token" });
+    const authHeader = String(req.headers.authorization || "");
+    const idToken = authHeader.startsWith("Bearer ")
+      ? authHeader.slice(7).trim()
+      : null;
 
-    if (!admin || !admin.auth) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "Server auth not configured" });
+    if (!idToken) {
+      return res.status(401).json({ ok: false, error: "Missing auth token" });
     }
 
-    const decoded = await admin.auth().verifyIdToken(token, true);
-    req.user = decoded;
+    // verify token (wrap in try/catch because admin.auth() may throw if firebase-admin not initialized)
+    let decoded = null;
+    try {
+      if (!admin || !admin.auth) {
+        console.error("Firebase admin not initialized.");
+        return res
+          .status(500)
+          .json({ ok: false, error: "Server auth not configured" });
+      }
+      decoded = await admin.auth().verifyIdToken(idToken);
+    } catch (err) {
+      console.error("requireAdmin: token verify failed:", err?.message || err);
+      return res
+        .status(401)
+        .json({ ok: false, error: "Invalid or expired token" });
+    }
 
-    // allowlist emails OR custom claim (role/admin)
-    const allowed = (config.ADMIN_EMAILS || "")
+    const email = decoded?.email;
+    const allowed = (config.ADMIN_EMAILS || process.env.ADMIN_EMAILS || "")
       .split(",")
-      .map((s) => s.trim().toLowerCase())
+      .map((s) => s.trim())
       .filter(Boolean);
 
-    const email = (decoded.email || "").toLowerCase();
-    const isAdminClaim = decoded.role === "admin" || decoded.admin === true;
-
-    if (allowed.length > 0) {
-      if (!allowed.includes(email))
-        return res
-          .status(403)
-          .json({
-            ok: false,
-            error: "Not authorized (email not in allowlist)",
-          });
-    } else {
-      if (!isAdminClaim)
-        return res.status(403).json({ ok: false, error: "Not authorized" });
+    if (allowed.length > 0 && !allowed.includes(email)) {
+      console.warn("requireAdmin: user not in admin list:", email);
+      return res.status(403).json({ ok: false, error: "Forbidden" });
     }
 
-    next();
-  } catch (e) {
-    console.error("requireAdmin error:", e);
-    return res.status(401).json({ ok: false, error: "Invalid token" });
+    // attach user info to request
+    req.user = { uid: decoded.uid, email };
+    return next();
+  } catch (err) {
+    console.error("requireAdmin fatal:", err);
+    return res.status(500).json({ ok: false, error: "Server auth error" });
   }
 }
