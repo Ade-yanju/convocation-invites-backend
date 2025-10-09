@@ -12,26 +12,18 @@ import { config } from "./config.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// ✅ Configure allowed origins
-const allowedOrigins = [
-  "http://localhost:3000", // local dev
-  "https://duqrinvitesevents.vercel.app", // your deployed frontend
-];
+const allowedOrigins = config.CORS_ORIGIN.split(",");
 
-// IMPORTANT: set credentials:true only if client uses fetch with credentials: 'include'.
-// We recommend using Authorization Bearer tokens (Firebase id token) instead of cookies.
-// If you use cookies, ensure config.CORS_ORIGIN is exact origin (no '*').
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, Postman)
-      if (!origin) return callback(null, true);
-      if (config.CORS_ORIGIN.includes(origin)) {
-        return callback(null, true);
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
       } else {
-        return callback(new Error("Not allowed by CORS"));
+        callback(new Error("Not allowed by CORS"));
       }
     },
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })
 );
