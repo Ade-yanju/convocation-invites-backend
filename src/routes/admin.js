@@ -69,10 +69,11 @@ router.post("/students", requireAdmin, async (req, res) => {
       // upload to Cloudinary (raw)
       let uploadInfo = { publicUrl: "", secure_url: "" };
       try {
-        uploadInfo = await uploadBufferToCloudinary(pdfBuffer, {
-          folder: process.env.CLOUDINARY_FOLDER || "invites",
-          filename,
-        });
+uploadInfo = await uploadBufferToCloudinary(pdfBuffer, {
+  folder: process.env.CLOUDINARY_FOLDER || "invites",
+  public_id: filename.replace('.pdf', ''),  // Remove extension, Cloudinary adds it
+  resource_type: 'raw'  // Important for PDFs
+});
       } catch (err) {
         console.error("cloud upload failed for", filename, err);
         // do not abort entire batch — attach empty URL and continue
