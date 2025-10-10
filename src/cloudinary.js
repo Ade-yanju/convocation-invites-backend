@@ -22,10 +22,6 @@ cloudinary.config({
   secure: true,
 });
 
-/**
- * uploadBufferToCloudinary(buffer, { folder, filename })
- * returns { publicUrl, secure_url, rawResult }
- */
 export default function uploadBufferToCloudinary(
   buffer,
   {
@@ -42,15 +38,12 @@ export default function uploadBufferToCloudinary(
       return reject(new Error("Cloudinary not configured (missing keys)"));
     }
 
-    // ✅ FIX: Build the full path without the extension
     const publicId = `${folder}/${filename.replace(/\.(pdf|PDF)$/, "")}`;
 
     const uploadStream = cloudinary.uploader.upload_stream(
       {
-        resource_type: "raw", // store pdf as raw so it's downloadable
+        resource_type: "raw",
         public_id: publicId,
-        // ❌ REMOVE THIS LINE - don't pass folder separately when public_id includes it
-        // folder,  
         use_filename: true,
         unique_filename: false,
         overwrite: true,
