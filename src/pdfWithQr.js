@@ -4,14 +4,14 @@ import qrcode from "qrcode";
 
 /**
  * generatePdfBufferForInvite(inv)
- * inv = { studentName, matricNo, guestName, phone, event: { title, date, time, venue, notes }, token }
+ * inv = { studentName, matricNo, guestName, phone, event: { title, date, time, venue, notes }, viewUrl }
  * returns Buffer (PDF)
  */
 export async function generatePdfBufferForInvite(inv = {}) {
-  const token = String(inv.token || "").trim();
-  const qrPayload = JSON.stringify({ t: token });
+  const viewUrl = String(inv.viewUrl || "").trim(); // IMPORTANT: QR will contain this full URL
+  const qrPayload = viewUrl || JSON.stringify({ t: inv.token || "" });
 
-  // Create QR data URL PNG
+  // Generate QR data URL (PNG)
   const qrDataUrl = await qrcode.toDataURL(qrPayload, {
     errorCorrectionLevel: "H",
     margin: 1,
@@ -20,7 +20,7 @@ export async function generatePdfBufferForInvite(inv = {}) {
   const base64 = qrDataUrl.split(",")[1];
   const qrBuffer = Buffer.from(base64, "base64");
 
-  // Create PDFKit doc and collect buffers
+  // Build PDF
   const doc = new PDFDocument({ size: "A4", margin: 40 });
   const bufs = [];
   doc.on("data", (d) => bufs.push(d));
@@ -29,14 +29,12 @@ export async function generatePdfBufferForInvite(inv = {}) {
     doc.on("error", (err) => reject(err));
   });
 
-  // Header
   doc
     .fontSize(18)
     .font("Helvetica-Bold")
     .text(inv.event?.title || "Event", { align: "center" });
-  doc.moveDown(0.5);
+  doc.moveDown(0.6);
 
-  // Guest / Student block
   doc
     .fontSize(12)
     .font("Helvetica")
@@ -56,8 +54,7 @@ export async function generatePdfBufferForInvite(inv = {}) {
     doc.fillColor("black");
   }
 
-  // Place QR centered
-  doc.moveDown(1.5);
+  doc.moveDown(1.2);
   const qrSize = 220;
   const pageWidth =
     doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -65,13 +62,22 @@ export async function generatePdfBufferForInvite(inv = {}) {
   doc.image(qrBuffer, xCenter, doc.y, { width: qrSize });
 
   doc.moveDown(1.1);
+  if (viewUrl) {
+    doc
+      .fontSize(9)
+      .fillColor("blue")
+      .text(viewUrl, { align: "center", link: viewUrl });
+    doc.fillColor("black");
+  }
+
+  doc.moveDown(0.7);
   doc
     .fontSize(10)
     .fillColor("gray")
     .text("Non-transferable • Single entry • Have ID ready", {
       align: "center",
     });
-  doc.end();
 
+  doc.end();
   return finished;
 }

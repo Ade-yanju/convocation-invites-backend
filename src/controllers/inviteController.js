@@ -1,13 +1,10 @@
 // server/src/controllers/inviteController.js
 import { customAlphabet } from "nanoid";
-import { fb } from "../firebase.js"; // Firebase Admin wrapper (auth + firestore)
+import { fb } from "../firebase.js";
 import { config } from "../config.js";
 import { toE164, waManualLink } from "../utils/phone.js";
-
 import {
   buildInvitePDFBuffer,
-  // NOTE: this uploads to Cloudinary when UPLOAD_STRATEGY=cloudinary
-  // (see pdfService.js provided earlier)
   saveBufferToStorage,
 } from "../services/pdfService.js";
 
@@ -31,20 +28,18 @@ export async function createInvites(req, res) {
     const { student, guests = [] } = req.body || {};
 
     if (!student?.matricNo || !student?.studentName) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          error: "student.matricNo and student.studentName required",
-        });
+      return res.status(400).json({
+        ok: false,
+        error: "student.matricNo and student.studentName are required.",
+      });
     }
     if (!Array.isArray(guests) || guests.length === 0) {
       return res
         .status(400)
-        .json({ ok: false, error: "At least one guest is required" });
+        .json({ ok: false, error: "At least one guest is required." });
     }
 
-    // Upsert student (keyed by matricNo)
+    // Upsert student
     const studentRef = fb.db.collection("students").doc(student.matricNo);
     await studentRef.set(
       {
@@ -56,7 +51,7 @@ export async function createInvites(req, res) {
       { merge: true }
     );
 
-    // Event meta (or use config.EVENT directly)
+    // Meta info
     const meta = config.EVENT || {
       title: "Dominion University Convocation 2025",
       date: "September 13, 2025",
@@ -66,42 +61,33 @@ export async function createInvites(req, res) {
     };
 
     const results = [];
+
     for (const g of guests) {
       if (!g?.guestName || !g?.phone) continue;
 
-      // Unique token per invite
       const token = nano();
 
-      // Build PDF (your pdf builder renders the QR from token)
+      // Generate invite PDF (includes QR)
       const pdfBuf = await buildInvitePDFBuffer({
-        student: {
-          matricNo: student.matricNo,
-          studentName: student.studentName,
-        },
-        guest: { guestName: g.guestName },
+        student,
+        guest: g,
         meta,
         token,
+        event: meta,
       });
 
-      const safe = g.guestName.replace(/[^a-z0-9]+/gi, "_");
-      const filename = `Invite_${student.matricNo}_${safe}.pdf`;
+      const safeGuest = g.guestName.replace(/[^a-z0-9]+/gi, "_");
+      const filename = `Invite_${student.matricNo}_${safeGuest}.pdf`;
 
-      // Upload to Cloudinary (or local, depending on UPLOAD_STRATEGY)
+      // Upload to Cloudinary
       const saved = await saveBufferToStorage(pdfBuf, filename);
-      // saved -> { storage, storageId?, filename, pdfPath, publicUrl }
 
-      // Persist invite in Firestore (status: UNUSED)
+      // Save to Firestore
       const invite = {
         token,
         status: "UNUSED",
-        student: {
-          matricNo: student.matricNo,
-          studentName: student.studentName,
-        },
-        guest: {
-          guestName: g.guestName.trim(),
-          phone: g.phone.trim(),
-        },
+        student,
+        guest,
         filename: saved.filename,
         publicUrl: saved.publicUrl,
         cloudinaryId: saved.storageId || null,
@@ -110,7 +96,6 @@ export async function createInvites(req, res) {
       };
       await fb.db.collection("invites").doc(token).set(invite);
 
-      // Build WhatsApp manual-share link
       const phoneE164 = toE164(invite.guest.phone, config.DEFAULT_COUNTRY);
       const waMsg = messageTemplate({
         guestName: invite.guest.guestName,
@@ -120,7 +105,6 @@ export async function createInvites(req, res) {
 
       results.push({
         id: token,
-        token,
         guestName: invite.guest.guestName,
         phone: invite.guest.phone,
         filename: invite.filename,
@@ -132,9 +116,9 @@ export async function createInvites(req, res) {
 
     res.json({ ok: true, files: results });
   } catch (e) {
-    console.error(e);
+    console.error("❌ Invite creation failed:", e);
     res
       .status(500)
-      .json({ ok: false, error: e.message || "Failed to create PDF" });
+      .json({ ok: false, error: e.message || "Failed to create PDF invite" });
   }
 }

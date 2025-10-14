@@ -5,10 +5,7 @@ import { requireAdmin } from "../middleware/requireAdmin.js";
 
 const router = express.Router();
 
-/**
- * Public check: anyone (scanner) can POST { token } to get status + guestName.
- * This is intentionally read-only and returns limited data.
- */
+// public check: no auth required
 router.post("/check", async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
@@ -19,32 +16,25 @@ router.post("/check", async (req, res) => {
       where: { token },
       include: { student: true },
     });
-
     if (!g) return res.status(404).json({ ok: false, error: "Invalid token" });
 
-    // limit data returned for public check
-    const out = {
+    return res.json({
       ok: true,
       status: g.status,
       guest: { guestName: g.guestName, phone: g.phone },
-      // do not expose sensitive student fields publicly unless you want to
-      student: {
-        studentName: g.student?.studentName || null,
-        matricNo: g.student?.matricNo || null,
-      },
+      student: g.student
+        ? { studentName: g.student.studentName, matricNo: g.student.matricNo }
+        : null,
       usedAt: g.usedAt,
       usedBy: g.usedBy || null,
-    };
-    return res.json(out);
-  } catch (e) {
-    console.error("/verify-json/check err:", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
+    });
+  } catch (err) {
+    console.error("/verify-json/check err:", err);
+    res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
-/**
- * Admin-only "use" endpoint - marks an UNUSED token as USED (atomic).
- */
+// admin-only use (keeps previous behavior)
 router.post("/use", requireAdmin, async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
@@ -52,15 +42,12 @@ router.post("/use", requireAdmin, async (req, res) => {
       return res.status(400).json({ ok: false, error: "token required" });
 
     const email = req.user?.email || "admin";
-
-    // atomic update: only update if status is UNUSED
     const updated = await prisma.guest.updateMany({
       where: { token, status: "UNUSED" },
       data: { status: "USED", usedAt: new Date(), usedBy: email },
     });
 
     if (updated.count === 0) {
-      // Already used or doesn't exist
       const g = await prisma.guest.findUnique({
         where: { token },
         include: { student: true },
@@ -70,15 +57,62 @@ router.post("/use", requireAdmin, async (req, res) => {
       return res.json({ ok: false, error: "Already used", guest: g });
     }
 
-    // return the used record
     const g = await prisma.guest.findUnique({
       where: { token },
       include: { student: true },
     });
     return res.json({ ok: true, guest: g });
-  } catch (e) {
-    console.error("/verify-json/use err:", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
+  } catch (err) {
+    console.error("/verify-json/use err:", err);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+/**
+ * Public admit via PIN (for gate staff)
+ * Body: { token, pin }
+ * PIN must match env VERIFY_ADMIT_PIN (simple approach)
+ */
+router.post("/use-with-pin", async (req, res) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    const pin = String(req.body?.pin || "").trim();
+    const expected = process.env.VERIFY_ADMIT_PIN || "";
+
+    if (!token || !pin)
+      return res
+        .status(400)
+        .json({ ok: false, error: "token and pin required" });
+    if (!expected)
+      return res
+        .status(500)
+        .json({ ok: false, error: "Server not configured for PIN admit" });
+    if (pin !== expected)
+      return res.status(403).json({ ok: false, error: "Invalid PIN" });
+
+    const updated = await prisma.guest.updateMany({
+      where: { token, status: "UNUSED" },
+      data: { status: "USED", usedAt: new Date(), usedBy: `pin:${pin}` },
+    });
+
+    if (updated.count === 0) {
+      const g = await prisma.guest.findUnique({
+        where: { token },
+        include: { student: true },
+      });
+      if (!g)
+        return res.status(404).json({ ok: false, error: "Token not found" });
+      return res.json({ ok: false, error: "Already used", guest: g });
+    }
+
+    const g = await prisma.guest.findUnique({
+      where: { token },
+      include: { student: true },
+    });
+    return res.json({ ok: true, guest: g });
+  } catch (err) {
+    console.error("/verify-json/use-with-pin err:", err);
+    res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
