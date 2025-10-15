@@ -1,15 +1,11 @@
 // server/src/utils/generatePdf.js
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
+import fs from "fs";
+import path from "path";
 
 /**
- * Generates an event invite PDF buffer (no Puppeteer required)
- * @param {Object} options
- * @param {Object} options.event - Event details (title, date, venue)
- * @param {Object} options.student - Student details (studentName, matricNo)
- * @param {Object} options.guest - Guest details (guestName)
- * @param {string} options.token - Unique verification token
- * @returns {Promise<Buffer>}
+ * Generates a beautiful Dominion University event invite PDF
  */
 export async function generateInvitePdfBuffer({
   event = {},
@@ -22,112 +18,151 @@ export async function generateInvitePdfBuffer({
       const doc = new PDFDocument({ size: "A4", margin: 50 });
       const chunks = [];
 
-      // Listen for data events
       doc.on("data", (chunk) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
 
-      // HEADER
+      // === COLORS ===
+      const dominionPurple = "#3a0ca3";
+      const gold = "#d4af37";
+      const textDark = "#111";
+      const grey = "#555";
+
+      // === LOGO ===
+      const logoPath = path.resolve("server/src/assets/du_logo.png");
+      if (fs.existsSync(logoPath)) {
+        doc.image(logoPath, 60, 20, { width: 70 });
+      }
+
+      // === HEADER ===
+      doc.rect(0, 0, doc.page.width, 80).fill(dominionPurple);
+
       doc
+        .fillColor("white")
         .fontSize(24)
-        .fillColor("#0b2e4e")
-        .text(event.title || "University Event Invitation", {
-          align: "center",
-        })
-        .moveDown(1);
+        .font("Helvetica-Bold")
+        .text("Dominion University Ibadan", 0, 25, { align: "center" });
 
       doc
         .fontSize(14)
-        .fillColor("#333")
-        .text(`This serves as an official invitation for the event below:`, {
+        .font("Helvetica")
+        .fillColor("white")
+        .text("3rd Convocation Ceremony — The Eagle Set", 0, 50, {
+          align: "center",
+        });
+
+      // === TITLE ===
+      doc.moveDown(4);
+      doc
+        .fontSize(22)
+        .fillColor(dominionPurple)
+        .font("Helvetica-Bold")
+        .text("Official Invitation", { align: "center" });
+
+      doc
+        .fontSize(12)
+        .fillColor(grey)
+        .text("This serves as an official invitation for the event below.", {
           align: "center",
         })
         .moveDown(2);
 
-      // MAIN DETAILS
+      // === EVENT DETAILS BOX ===
+      const boxTop = doc.y;
       doc
-        .fontSize(16)
-        .fillColor("#0b2e4e")
-        .text("Event Details", { underline: true })
-        .moveDown(0.5);
+        .roundedRect(50, boxTop, doc.page.width - 100, 110, 10)
+        .strokeColor(gold)
+        .lineWidth(1.5)
+        .stroke();
+
+      doc.moveDown(1);
+      doc
+        .fontSize(15)
+        .fillColor(dominionPurple)
+        .font("Helvetica-Bold")
+        .text("Event Details", 70, boxTop + 10)
+        .moveDown(0.4);
 
       doc
-        .fontSize(13)
-        .fillColor("#222")
-        .text(`Event: ${event.title || "—"}`)
-        .text(`Date: ${event.date || "—"}`)
-        .text(`Time: ${event.time || "—"}`)
-        .text(`Venue: ${event.venue || "—"}`)
-        .moveDown(1.5);
+        .fontSize(12)
+        .fillColor(textDark)
+        .font("Helvetica")
+        .text(`Event: ${event.title || "Dominion University Convocation 2025"}`)
+        .text(`Date: ${event.date || "2025-10-25"}`)
+        .text(`Time: ${event.time || "16:57"}`)
+        .text(`Venue: ${event.venue || "Chapel"}`)
+        .moveDown(2);
 
+      // === STUDENT INFO ===
       doc
-        .fontSize(16)
-        .fillColor("#0b2e4e")
+        .fontSize(15)
+        .fillColor(dominionPurple)
+        .font("Helvetica-Bold")
         .text("Student Information", { underline: true })
         .moveDown(0.5);
 
       doc
-        .fontSize(13)
-        .fillColor("#222")
+        .fontSize(12)
+        .fillColor(textDark)
         .text(`Student Name: ${student.studentName || "—"}`)
         .text(`Matric No: ${student.matricNo || "—"}`)
         .moveDown(1.5);
 
+      // === GUEST INFO ===
       doc
-        .fontSize(16)
-        .fillColor("#0b2e4e")
+        .fontSize(15)
+        .fillColor(dominionPurple)
+        .font("Helvetica-Bold")
         .text("Guest Information", { underline: true })
         .moveDown(0.5);
 
       doc
-        .fontSize(13)
-        .fillColor("#222")
+        .fontSize(12)
+        .fillColor(textDark)
         .text(`Guest Name: ${guest.guestName || "—"}`)
-        .moveDown(1.5);
+        .moveDown(2);
 
-      // TOKEN
-      doc
-        .fontSize(13)
-        .fillColor("#444")
-        .text(`Admission Token: ${token}`, { align: "left" })
-        .moveDown(1.5);
-
-      // Generate QR Code
+      // === QR CODE SECTION ===
       const qrData = `https://duqrinvitesevents.vercel.app/verify/${token}`;
       const qrDataUrl = await QRCode.toDataURL(qrData);
       const qrImage = qrDataUrl.replace(/^data:image\/png;base64,/, "");
-
-      // Add QR to PDF
       const qrImgBuffer = Buffer.from(qrImage, "base64");
-      doc.image(qrImgBuffer, {
-        align: "center",
-        fit: [150, 150],
-        valign: "center",
-      });
 
+      const qrX = (doc.page.width - 150) / 2;
+      doc.image(qrImgBuffer, qrX, doc.y, { fit: [150, 150] });
       doc.moveDown(1.5);
-      doc
-        .fontSize(12)
-        .fillColor("#555")
-        .text(
-          "⚠️ This QR code admits one guest only. Once scanned, it becomes invalid.",
-          {
-            align: "center",
-          }
-        );
 
-      // FOOTER
-      doc.moveDown(2);
       doc
         .fontSize(10)
-        .fillColor("#999")
+        .fillColor(grey)
         .text(
-          `Generated for ${
-            event.title || "University Event"
-          } • ${new Date().toLocaleString()}`,
+          "⚠️ This QR code admits one guest only. Once scanned, it becomes invalid.",
+          { align: "center" }
+        )
+        .moveDown(0.5);
+
+      doc
+        .fontSize(11)
+        .fillColor(textDark)
+        .text(`Admission Token: ${token}`, { align: "center" })
+        .moveDown(2);
+
+      // === FOOTER ===
+      doc
+        .fontSize(10)
+        .fillColor(grey)
+        .text(
+          `Generated for Dominion University Convocation • ${new Date().toLocaleString()}`,
           { align: "center" }
         );
 
-      // Finalize PDF
+      // === WATERMARK ===
+      doc.rotate(-45, { origin: [100, 400] });
+      doc
+        .fontSize(60)
+        .fillColor("#f2f2f2")
+        .text("Dominion University", 80, 400, { opacity: 0.3 });
+      doc.rotate(45, { origin: [100, 400] });
+
       doc.end();
     } catch (err) {
       reject(err);
