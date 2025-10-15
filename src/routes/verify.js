@@ -46,6 +46,80 @@ router.get("/:token", async (req, res) => {
       );
     }
 
+    // --- JSON VERIFY ROUTES ---
+
+    // Check guest validity (used by frontend QR scanner)
+    router.post("/json/check", async (req, res) => {
+      try {
+        const { token } = req.body;
+        if (!token) {
+          return res.status(400).json({ ok: false, error: "Missing token" });
+        }
+
+        const guest = await prisma.guest.findUnique({
+          where: { token },
+          include: { student: true },
+        });
+
+        if (!guest) {
+          return res.status(404).json({ ok: false, error: "Invalid QR code" });
+        }
+
+        return res.json({
+          ok: true,
+          guest: {
+            guestName: guest.guestName,
+            studentName: guest.student?.studentName,
+            matricNo: guest.student?.matricNo,
+            phone: guest.phone,
+            status: guest.status,
+            usedAt: guest.usedAt,
+            usedBy: guest.usedBy,
+          },
+        });
+      } catch (e) {
+        console.error("verify-json/check failed:", e);
+        res.status(500).json({ ok: false, error: "Internal server error" });
+      }
+    });
+
+    // Mark guest as used (for admission)
+    router.post("/json/use", async (req, res) => {
+      try {
+        const { token } = req.body;
+        if (!token) {
+          return res.status(400).json({ ok: false, error: "Missing token" });
+        }
+
+        const guest = await prisma.guest.findUnique({ where: { token } });
+        if (!guest) {
+          return res.status(404).json({ ok: false, error: "Invalid QR code" });
+        }
+
+        if (guest.status === "USED") {
+          return res.status(200).json({ ok: false, error: "Already used" });
+        }
+
+        const updated = await prisma.guest.update({
+          where: { token },
+          data: { status: "USED", usedAt: new Date(), usedBy: "scanner" },
+        });
+
+        return res.json({
+          ok: true,
+          message: "Guest admitted",
+          guest: {
+            guestName: updated.guestName,
+            status: updated.status,
+            usedAt: updated.usedAt,
+          },
+        });
+      } catch (e) {
+        console.error("verify-json/use failed:", e);
+        res.status(500).json({ ok: false, error: "Internal server error" });
+      }
+    });
+
     // If ?mark=1 then try to flip UNUSED -> USED atomically
     if (mark === "1") {
       // Attempt atomic admit
