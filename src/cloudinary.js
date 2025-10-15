@@ -38,7 +38,6 @@ export default function uploadBufferToCloudinary(
       {
         resource_type: "raw", // critical for pdf
         public_id: publicId,
-        folder,
         use_filename: true,
         unique_filename: false,
         overwrite: true,
