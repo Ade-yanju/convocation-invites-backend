@@ -9,6 +9,17 @@ import verifyJsonRoutes from "./routes/verify-json.js";
 import verifyViewRoutes from "./routes/verify-view.js";
 import downloadRoute from "./routes/download.js";
 import { config } from "./config.js";
+import { PrismaClient } from "@prisma/client";
+const prisma = new PrismaClient();
+
+(async () => {
+  try {
+    await prisma.$connect();
+    console.log("✅ Database connected successfully!");
+  } catch (err) {
+    console.error("❌ Database connection failed:", err.message);
+  }
+})();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
