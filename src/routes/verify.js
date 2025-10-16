@@ -1,128 +1,120 @@
-// server/src/routes/verify.js
 import express from "express";
 import { prisma } from "../db.js";
 
 const router = express.Router();
 
-router.get("/:token", async (req, res) => {
-  // avoid caching of admit result pages
-  res.set("Cache-Control", "no-store");
-
+/* ============================================================
+   ✅ JSON VERIFY ROUTES (used by React QR scanner or API calls)
+   ============================================================ */
+router.post("/json/check", async (req, res) => {
   try {
-    const token = String(req.params.token || "").trim();
-    const mark = String(req.query.mark || "");
-    if (!token) {
-      return sendHtml(res, 400, htmlPage("Invalid QR", "No token provided."));
-    }
+    const { token } = req.body;
+    if (!token)
+      return res.status(400).json({ ok: false, error: "Missing token" });
 
-    // Fetch guest (to show names even if already used)
     const guest = await prisma.guest.findUnique({
       where: { token },
       include: { student: true },
     });
 
-    if (!guest) {
+    if (!guest)
+      return res.status(404).json({ ok: false, error: "Invalid QR code" });
+
+    return res.json({
+      ok: true,
+      guest: {
+        guestName: guest.guestName,
+        studentName: guest.student?.studentName,
+        matricNo: guest.student?.matricNo,
+        phone: guest.phone,
+        status: guest.status,
+        usedAt: guest.usedAt,
+        usedBy: guest.usedBy,
+      },
+    });
+  } catch (e) {
+    console.error("verify-json/check failed:", e);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+router.post("/json/use", async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token)
+      return res.status(400).json({ ok: false, error: "Missing token" });
+
+    const guest = await prisma.guest.findUnique({ where: { token } });
+    if (!guest)
+      return res.status(404).json({ ok: false, error: "Invalid QR code" });
+
+    if (guest.status === "USED")
+      return res.status(200).json({ ok: false, error: "Already used" });
+
+    const updated = await prisma.guest.update({
+      where: { token },
+      data: { status: "USED", usedAt: new Date(), usedBy: "scanner" },
+    });
+
+    return res.json({
+      ok: true,
+      message: "Guest admitted",
+      guest: {
+        guestName: updated.guestName,
+        status: updated.status,
+        usedAt: updated.usedAt,
+      },
+    });
+  } catch (e) {
+    console.error("verify-json/use failed:", e);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+/* ============================================================
+   ✅ HTML VERIFY ROUTE (when QR is scanned by smartphone camera)
+   ============================================================ */
+router.get("/:token", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
+  try {
+    const token = String(req.params.token || "").trim();
+    const mark = String(req.query.mark || "");
+    if (!token)
+      return sendHtml(res, 400, htmlPage("Invalid QR", "No token provided."));
+
+    // Fetch guest and student details
+    const guest = await prisma.guest.findUnique({
+      where: { token },
+      include: { student: true },
+    });
+
+    if (!guest)
       return sendHtml(
         res,
         404,
         htmlPage("Invalid QR", "This code is not recognized.")
       );
-    }
 
-    // If already used and no (re)mark, show used info
+    // If already used and no remark
     if (guest.status === "USED" && mark !== "1") {
       return sendHtml(
         res,
         200,
         htmlPage(
-          "Already Used",
+          "Already Used ❌",
           detailsBlock(guest) +
             (guest.usedAt
-              ? `<div style="margin-top:8px;color:#64748b;font-size:14px">Used at: ${new Date(
-                  guest.usedAt
-                ).toLocaleString()}</div>`
+              ? `<div style="margin-top:8px;color:#64748b;font-size:14px">
+                   Used at: ${new Date(guest.usedAt).toLocaleString()}
+                 </div>`
               : "")
         )
       );
     }
 
-    // --- JSON VERIFY ROUTES ---
-
-    // Check guest validity (used by frontend QR scanner)
-    router.post("/json/check", async (req, res) => {
-      try {
-        const { token } = req.body;
-        if (!token) {
-          return res.status(400).json({ ok: false, error: "Missing token" });
-        }
-
-        const guest = await prisma.guest.findUnique({
-          where: { token },
-          include: { student: true },
-        });
-
-        if (!guest) {
-          return res.status(404).json({ ok: false, error: "Invalid QR code" });
-        }
-
-        return res.json({
-          ok: true,
-          guest: {
-            guestName: guest.guestName,
-            studentName: guest.student?.studentName,
-            matricNo: guest.student?.matricNo,
-            phone: guest.phone,
-            status: guest.status,
-            usedAt: guest.usedAt,
-            usedBy: guest.usedBy,
-          },
-        });
-      } catch (e) {
-        console.error("verify-json/check failed:", e);
-        res.status(500).json({ ok: false, error: "Internal server error" });
-      }
-    });
-
-    // Mark guest as used (for admission)
-    router.post("/json/use", async (req, res) => {
-      try {
-        const { token } = req.body;
-        if (!token) {
-          return res.status(400).json({ ok: false, error: "Missing token" });
-        }
-
-        const guest = await prisma.guest.findUnique({ where: { token } });
-        if (!guest) {
-          return res.status(404).json({ ok: false, error: "Invalid QR code" });
-        }
-
-        if (guest.status === "USED") {
-          return res.status(200).json({ ok: false, error: "Already used" });
-        }
-
-        const updated = await prisma.guest.update({
-          where: { token },
-          data: { status: "USED", usedAt: new Date(), usedBy: "scanner" },
-        });
-
-        return res.json({
-          ok: true,
-          message: "Guest admitted",
-          guest: {
-            guestName: updated.guestName,
-            status: updated.status,
-            usedAt: updated.usedAt,
-          },
-        });
-      } catch (e) {
-        console.error("verify-json/use failed:", e);
-        res.status(500).json({ ok: false, error: "Internal server error" });
-      }
-    });
-
-    // If ?mark=1 then try to flip UNUSED -> USED atomically
+    // Mark as used if ?mark=1
     if (mark === "1") {
-      // Attempt atomic admit
       const usedBy = (req.user && req.user.email) || "web-verify";
       const updated = await prisma.guest.updateMany({
         where: { token, status: "UNUSED" },
@@ -130,27 +122,28 @@ router.get("/:token", async (req, res) => {
       });
 
       if (updated.count === 0) {
-        // Either already USED (race) or status not UNUSED
         const refreshed = await prisma.guest.findUnique({
           where: { token },
           include: { student: true },
         });
-        const wasUsed =
-          refreshed && refreshed.status === "USED"
-            ? `<div style="margin-top:8px;color:#64748b;font-size:14px">Already used${
-                refreshed.usedAt
-                  ? ` at ${new Date(refreshed.usedAt).toLocaleString()}`
-                  : ""
-              }.</div>`
-            : "";
+
         return sendHtml(
           res,
           200,
-          htmlPage("Already Used", detailsBlock(refreshed || guest) + wasUsed)
+          htmlPage(
+            "Already Used ❌",
+            detailsBlock(refreshed || guest) +
+              `<div style="margin-top:8px;color:#64748b;font-size:14px">
+                 Already used${
+                   refreshed?.usedAt
+                     ? ` at ${new Date(refreshed.usedAt).toLocaleString()}`
+                     : ""
+                 }.
+               </div>`
+          )
         );
       }
 
-      // Success; fetch to show final state
       const done = await prisma.guest.findUnique({
         where: { token },
         include: { student: true },
@@ -163,49 +156,50 @@ router.get("/:token", async (req, res) => {
           "Admitted ✅",
           detailsBlock(done) +
             (done.usedAt
-              ? `<div style="margin-top:8px;color:#64748b;font-size:14px">Marked used at: ${new Date(
-                  done.usedAt
-                ).toLocaleString()}</div>`
+              ? `<div style="margin-top:8px;color:#64748b;font-size:14px">
+                   Marked used at: ${new Date(done.usedAt).toLocaleString()}
+                 </div>`
               : "")
         )
       );
     }
 
-    // Otherwise show "Valid Code" with an Admit button
+    // Otherwise, show "Valid Code" with Admit button
     return sendHtml(
       res,
       200,
       htmlPage(
-        "Valid Code",
+        "Valid Code ✅",
         detailsBlock(guest) +
-          `<div style="margin-top:14px">
+          `<div style="margin-top:14px;text-align:center">
              <a href="/verify/${guest.token}?mark=1"
-                style="display:inline-block;padding:12px 16px;background:#0B2E4E;color:#fff;border-radius:10px;text-decoration:none;font-weight:800">
+                style="display:inline-block;padding:12px 20px;background:#0B2E4E;color:#fff;border-radius:10px;text-decoration:none;font-weight:800">
                 Admit & Mark Used
              </a>
            </div>`
       )
     );
   } catch (e) {
-    console.error(e);
-    return sendHtml(res, 500, htmlPage("Server error", "Please try again."));
+    console.error("HTML verify failed:", e);
+    sendHtml(res, 500, htmlPage("Server Error", "Please try again later."));
   }
 });
 
 export default router;
 
-// --------- helpers ---------
+/* ============================================================
+   ✅ Helper Functions
+   ============================================================ */
 
 function detailsBlock(guest) {
-  // Defensive if guest vanished between reads
   if (!guest) return `<div>Record not found.</div>`;
   return `
-    <div style="margin-top:10px;font-size:16px;line-height:1.5">
+    <div style="margin-top:10px;font-size:16px;line-height:1.6">
       <div><b>Guest:</b> ${escapeHtml(guest.guestName || "-")}</div>
       <div><b>Student:</b> ${escapeHtml(
         guest.student?.studentName || "-"
       )}</div>
-      <div><b>Matric:</b> ${escapeHtml(guest.student?.matricNo || "-")}</div>
+      <div><b>Matric No:</b> ${escapeHtml(guest.student?.matricNo || "-")}</div>
       <div><b>Status:</b> ${
         guest.status === "USED"
           ? `<span style="color:#dc2626;font-weight:800">USED</span>`
@@ -216,9 +210,7 @@ function detailsBlock(guest) {
 }
 
 function htmlPage(title, body) {
-  // Dominion palette
-  const primary = "#0B2E4E"; // navy
-  const accent = "#D4AF37"; // gold
+  const primary = "#0B2E4E";
   const line = "#e5e7eb";
 
   return `<!doctype html>
@@ -231,16 +223,18 @@ function htmlPage(title, body) {
   <div style="max-width:720px;margin:0 auto;padding:20px">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
       <img src="/du-logo.png" alt="Dominion University" style="height:40px"/>
-      <div style="font-weight:900;color:${primary};font-size:20px">Dominion University • Verification</div>
+      <div style="font-weight:900;color:${primary};font-size:20px">
+        Dominion University • Verification
+      </div>
     </div>
     <div style="border:1px solid ${line};background:#fff;border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)">
-      <div style="padding:14px 18px;border-bottom:1px solid ${line};font-weight:900;color:${primary}">${escapeHtml(
-    title
-  )}</div>
+      <div style="padding:14px 18px;border-bottom:1px solid ${line};font-weight:900;color:${primary}">
+        ${escapeHtml(title)}
+      </div>
       <div style="padding:18px">${body}</div>
     </div>
-    <div style="margin-top:10px;font-size:12px;color:#64748b">
-      Tip: bookmark this page on scanners for quick admits.
+    <div style="margin-top:10px;font-size:12px;color:#64748b;text-align:center">
+      Tip: Bookmark this page for quick gate admissions.
     </div>
   </div>
 </body>
