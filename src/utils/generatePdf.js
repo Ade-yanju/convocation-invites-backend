@@ -122,7 +122,10 @@ export async function generateInvitePdfBuffer({
         .moveDown(2);
 
       // === QR CODE SECTION ===
-      const qrData = `https://duqrinvitesevents.vercel.app/verify/${token}`;
+      const qrData = `https://duqrinvitesevents.vercel.app/publicverify/${encodeURIComponent(
+        token
+      )}`;
+
       const qrDataUrl = await QRCode.toDataURL(qrData);
       const qrImage = qrDataUrl.replace(/^data:image\/png;base64,/, "");
       const qrImgBuffer = Buffer.from(qrImage, "base64");
