@@ -14,6 +14,20 @@ const router = express.Router();
  *  - Uploads each to Cloudinary
  *  - Returns downloadable URLs (for client to download as PDF)
  */
+router.get("/generate-invite/:token", async (req, res) => {
+  try {
+    const token = req.params.token;
+    const guest = { guestName: "John Doe" };
+    const student = { studentName: "Jane Smith", matricNo: "DU/2020/011" };
+
+    const pdfPath = await generateInvitePdf(guest, student, token);
+    res.download(pdfPath);
+  } catch (err) {
+    console.error("PDF generation failed:", err);
+    res.status(500).json({ error: "Failed to generate invite PDF" });
+  }
+});
+
 router.post("/students", async (req, res) => {
   try {
     const payload = req.body || {};

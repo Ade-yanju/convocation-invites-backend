@@ -4,171 +4,133 @@ import fs from "fs";
 import path from "path";
 
 /**
- * Generates a Dominion University convocation invite (premium design)
+ * Generates a styled convocation invitation PDF
+ * similar to Dominion University’s convocation invite card.
  */
-export async function generateInvitePdfBuffer({
-  event = {},
-  student = {},
-  guest = {},
-  token = "",
-}) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ size: "A4", margin: 40 });
-      const chunks = [];
-
-      doc.on("data", (chunk) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-
-      // === BRAND COLORS ===
-      const purple = "#0B2E4E";
-      const gold = "#D4AF37";
-      const text = "#111827";
-      const gray = "#6B7280";
-
-      // === HEADER BACKGROUND ===
-      doc
-        .rect(0, 0, doc.page.width, 120)
-        .fill(purple)
-        .strokeColor(gold)
-        .lineWidth(2)
-        .stroke();
-
-      // === LOGO ===
-      const logoPath = path.resolve("server/src/assets/du_logo.png");
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, doc.page.width / 2 - 35, 20, { width: 70 });
-      }
-
-      // === UNIVERSITY TITLE ===
-      doc
-        .fillColor("#fff")
-        .fontSize(22)
-        .font("Helvetica-Bold")
-        .text("Dominion University Ibadan", 0, 95, { align: "center" });
-
-      // === EVENT NAME ===
-      doc
-        .moveDown(3)
-        .fontSize(16)
-        .fillColor(purple)
-        .font("Helvetica-Bold")
-        .text("Official Invitation", { align: "center" })
-        .moveDown(0.5)
-        .font("Helvetica")
-        .fontSize(12)
-        .fillColor(gray)
-        .text("3rd Convocation Ceremony — The Eagle Set", { align: "center" })
-        .moveDown(2);
-
-      // === INVITE BORDER ===
-      const boxY = doc.y - 10;
-      doc
-        .roundedRect(40, boxY, doc.page.width - 80, 420, 16)
-        .lineWidth(2)
-        .strokeColor(gold)
-        .stroke();
-
-      doc.moveDown(1.5);
-
-      // === EVENT DETAILS ===
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(14)
-        .fillColor(purple)
-        .text("🎓 Event Details", 60, boxY + 20)
-        .moveDown(0.5);
-
-      doc
-        .font("Helvetica")
-        .fontSize(12)
-        .fillColor(text)
-        .text(`Event: ${event.title || "Dominion University Convocation 2025"}`)
-        .text(`Date: ${event.date || "25th October 2025"}`)
-        .text(`Time: ${event.time || "10:00 AM"}`)
-        .text(`Venue: ${event.venue || "University Auditorium"}`)
-        .moveDown(1.5);
-
-      // === STUDENT INFO ===
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(14)
-        .fillColor(purple)
-        .text("🎓 Student Information")
-        .moveDown(0.5)
-        .font("Helvetica")
-        .fontSize(12)
-        .fillColor(text)
-        .text(`Name: ${student.studentName || "—"}`)
-        .text(`Matric No: ${student.matricNo || "—"}`)
-        .moveDown(1.5);
-
-      // === GUEST INFO ===
-      doc
-        .font("Helvetica-Bold")
-        .fontSize(14)
-        .fillColor(purple)
-        .text("🎟️ Guest Information")
-        .moveDown(0.5)
-        .font("Helvetica")
-        .fontSize(12)
-        .fillColor(text)
-        .text(`Guest Name: ${guest.guestName || "—"}`)
-        .moveDown(1.5);
-
-      // === QR CODE GENERATION ===
-      const qrUrl = `https://duqrinvitesevents.vercel.app/verify/${encodeURIComponent(
-        token
-      )}`;
-      const qrDataUrl = await QRCode.toDataURL(qrUrl);
-      const qrImage = qrDataUrl.replace(/^data:image\/png;base64,/, "");
-      const qrBuffer = Buffer.from(qrImage, "base64");
-
-      const qrX = (doc.page.width - 120) / 2;
-      const qrY = doc.y;
-      doc.image(qrBuffer, qrX, qrY, { fit: [120, 120] });
-
-      // === QR FRAME ===
-      doc
-        .rect(qrX - 6, qrY - 6, 132, 132)
-        .strokeColor(gold)
-        .lineWidth(1.5)
-        .stroke();
-
-      doc.moveDown(8);
-      doc
-        .font("Helvetica")
-        .fontSize(10)
-        .fillColor(gray)
-        .text("Scan this QR code for entry verification", { align: "center" })
-        .moveDown(0.5)
-        .font("Helvetica-Oblique")
-        .fillColor(text)
-        .text(`Token: ${token}`, { align: "center" });
-
-      // === FOOTER ===
-      doc.moveDown(2);
-      doc
-        .fontSize(10)
-        .fillColor(gray)
-        .text(
-          `Generated on ${new Date().toLocaleString()} for Dominion University Convocation`,
-          { align: "center" }
-        );
-
-      // === WATERMARK ===
-      doc.rotate(-45, { origin: [100, 400] });
-      doc
-        .fontSize(60)
-        .fillColor("#F3F4F6")
-        .text("Dominion University", 80, 400, {
-          opacity: 0.2,
-        });
-      doc.rotate(45, { origin: [100, 400] });
-
-      doc.end();
-    } catch (err) {
-      reject(err);
-    }
+export async function generateInvitePdf(guest, student, token) {
+  const doc = new PDFDocument({
+    size: "A5",
+    layout: "landscape",
+    margin: 0,
   });
+
+  // File path to save PDF (you can change this)
+  const outputPath = path.join(
+    process.cwd(),
+    `public/invites/${guest?.guestName || "invite"}.pdf`
+  );
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  const stream = fs.createWriteStream(outputPath);
+  doc.pipe(stream);
+
+  // Colors
+  const purple = "#4B0082";
+  const gold = "#D4AF37";
+  const white = "#FFFFFF";
+
+  // Background
+  doc.rect(0, 0, doc.page.width, doc.page.height).fill(purple);
+
+  // ===== Header text =====
+  doc
+    .fontSize(22)
+    .fillColor(white)
+    .font("Helvetica-Bold")
+    .text("DOMINION UNIVERSITY", 40, 40);
+  doc.fontSize(16).text("IBADAN", 40, 65);
+  doc
+    .fontSize(10)
+    .font("Helvetica")
+    .text("...Raising Generational Leaders", 40, 85);
+
+  // ===== Lion emblem substitute =====
+  doc
+    .circle(doc.page.width - 90, 80, 50)
+    .lineWidth(6)
+    .strokeColor(gold)
+    .stroke();
+  doc
+    .fontSize(50)
+    .fillColor(gold)
+    .text("🦁", doc.page.width - 120, 45);
+
+  // ===== Gold seal =====
+  const centerX = doc.page.width / 2;
+  const centerY = doc.page.height / 2 - 10;
+  doc.circle(centerX, centerY, 60).fill(gold);
+
+  doc
+    .fontSize(24)
+    .fillColor(white)
+    .font("Helvetica-Bold")
+    .text("3RD", centerX - 25, centerY - 10);
+  doc
+    .fontSize(12)
+    .font("Helvetica")
+    .text("CONVOCATION", centerX - 60, centerY + 15);
+  doc.text("CEREMONY", centerX - 40, centerY + 30);
+
+  // ===== White info box =====
+  const boxX = 40;
+  const boxY = doc.page.height - 150;
+  const boxW = doc.page.width - 80;
+  const boxH = 100;
+  doc.rect(boxX, boxY, boxW, boxH).fill(white);
+
+  doc.fillColor(purple).font("Helvetica-Bold").fontSize(14);
+  doc.text("INVITATION", boxX + boxW / 2 - 40, boxY + 10);
+
+  doc.fillColor("black").font("Helvetica").fontSize(11);
+  doc.text(
+    `This is to invite ${guest?.guestName || "Guest Name"}`,
+    boxX + 20,
+    boxY + 35
+  );
+  doc.text(
+    `as a guest to the 3rd Convocation Ceremony of Dominion University, Ibadan.`,
+    boxX + 20,
+    boxY + 50
+  );
+  doc.fontSize(10).fillColor("#333");
+  doc.text(
+    `Invited by ${student?.studentName || "Student Name"} (${
+      student?.matricNo || "Matric No"
+    })`,
+    boxX + 20,
+    boxY + 70
+  );
+
+  // ===== QR Code =====
+  const verifyUrl = `https://yourdomain.com/verify/${encodeURIComponent(
+    token
+  )}`;
+  const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
+    width: 120,
+    margin: 0,
+    color: { dark: "#000000", light: "#FFFFFF00" },
+  });
+  const qrImage = qrDataUrl.split(",")[1];
+  const qrBuffer = Buffer.from(qrImage, "base64");
+
+  doc.image(qrBuffer, doc.page.width - 150, boxY - 20, {
+    fit: [90, 90],
+  });
+  doc
+    .fontSize(8)
+    .fillColor(white)
+    .text("Scan QR for Verification", doc.page.width - 150, boxY - 30);
+
+  // ===== Footer text =====
+  doc
+    .fontSize(10)
+    .fillColor(white)
+    .text("Convocation of The Eagle Set", centerX - 90, doc.page.height - 30);
+  doc.text("October 21–26, 2025", centerX - 60, doc.page.height - 45);
+
+  doc.end();
+
+  // Return a promise that resolves once writing is complete
+  await new Promise((resolve) => stream.on("finish", resolve));
+
+  return outputPath;
 }
