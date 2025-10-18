@@ -4,10 +4,6 @@ import QRCode from "qrcode";
 import fs from "fs";
 import path from "path";
 
-/**
- * Generates a styled convocation invitation PDF
- * similar to Dominion University’s convocation invite card.
- */
 export async function generateInvitePdf(guest, student, token) {
   const doc = new PDFDocument({
     size: "A5",
@@ -15,7 +11,6 @@ export async function generateInvitePdf(guest, student, token) {
     margin: 0,
   });
 
-  // File path to save PDF (you can change this)
   const outputPath = path.join(
     process.cwd(),
     `public/invites/${guest?.guestName || "invite"}.pdf`
@@ -32,7 +27,7 @@ export async function generateInvitePdf(guest, student, token) {
   // Background
   doc.rect(0, 0, doc.page.width, doc.page.height).fill(purple);
 
-  // ===== Header text =====
+  // Header
   doc
     .fontSize(22)
     .fillColor(white)
@@ -44,7 +39,7 @@ export async function generateInvitePdf(guest, student, token) {
     .font("Helvetica")
     .text("...Raising Generational Leaders", 40, 85);
 
-  // ===== Lion emblem substitute =====
+  // Lion symbol
   doc
     .circle(doc.page.width - 90, 80, 50)
     .lineWidth(6)
@@ -55,11 +50,10 @@ export async function generateInvitePdf(guest, student, token) {
     .fillColor(gold)
     .text("🦁", doc.page.width - 120, 45);
 
-  // ===== Gold seal =====
+  // Seal
   const centerX = doc.page.width / 2;
   const centerY = doc.page.height / 2 - 10;
   doc.circle(centerX, centerY, 60).fill(gold);
-
   doc
     .fontSize(24)
     .fillColor(white)
@@ -71,11 +65,11 @@ export async function generateInvitePdf(guest, student, token) {
     .text("CONVOCATION", centerX - 60, centerY + 15);
   doc.text("CEREMONY", centerX - 40, centerY + 30);
 
-  // ===== White info box =====
-  const boxX = 40;
-  const boxY = doc.page.height - 150;
-  const boxW = doc.page.width - 80;
-  const boxH = 100;
+  // Info box
+  const boxX = 40,
+    boxY = doc.page.height - 150,
+    boxW = doc.page.width - 80,
+    boxH = 100;
   doc.rect(boxX, boxY, boxW, boxH).fill(white);
 
   doc.fillColor(purple).font("Helvetica-Bold").fontSize(14);
@@ -101,37 +95,34 @@ export async function generateInvitePdf(guest, student, token) {
     boxY + 70
   );
 
-  // ===== QR Code =====
+  // ✅ Generate a FULL verification URL (for guests)
   const verifyUrl = `https://convocation-invites.vercel.app/verify/${encodeURIComponent(
     token
   )}`;
+
+  // Generate QR
   const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
     width: 120,
     margin: 0,
     color: { dark: "#000000", light: "#FFFFFF00" },
   });
+
   const qrImage = qrDataUrl.split(",")[1];
   const qrBuffer = Buffer.from(qrImage, "base64");
 
-  doc.image(qrBuffer, doc.page.width - 150, boxY - 20, {
-    fit: [90, 90],
-  });
+  // Add QR
+  doc.image(qrBuffer, doc.page.width - 150, boxY - 20, { fit: [90, 90] });
   doc
     .fontSize(8)
     .fillColor(white)
     .text("Scan QR for Verification", doc.page.width - 150, boxY - 30);
 
-  // ===== Footer text =====
-  doc
-    .fontSize(10)
-    .fillColor(white)
-    .text("Convocation of The Eagle Set", centerX - 90, doc.page.height - 30);
+  // Footer
+  doc.fontSize(10).fillColor(white);
+  doc.text("Convocation of The Eagle Set", centerX - 90, doc.page.height - 30);
   doc.text("October 21–26, 2025", centerX - 60, doc.page.height - 45);
 
   doc.end();
-
-  // Return a promise that resolves once writing is complete
   await new Promise((resolve) => stream.on("finish", resolve));
-
   return outputPath;
 }
