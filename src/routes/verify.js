@@ -1,3 +1,5 @@
+// server/src/routes/verify.js
+
 import express from "express";
 import { prisma } from "../db.js";
 
@@ -6,6 +8,11 @@ const router = express.Router();
 /* ============================================================
    ✅ JSON VERIFY ROUTES (used by React QR scanner or API calls)
    ============================================================ */
+
+/**
+ * @route POST /verify/json/check
+ * @desc Check if QR token is valid and return guest info
+ */
 router.post("/json/check", async (req, res) => {
   try {
     const { token } = req.body;
@@ -38,6 +45,10 @@ router.post("/json/check", async (req, res) => {
   }
 });
 
+/**
+ * @route POST /verify/json/use
+ * @desc Mark QR token as used (for app scanners)
+ */
 router.post("/json/use", async (req, res) => {
   try {
     const { token } = req.body;
@@ -49,7 +60,7 @@ router.post("/json/use", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Invalid QR code" });
 
     if (guest.status === "USED")
-      return res.status(200).json({ ok: false, error: "Already used" });
+      return res.status(409).json({ ok: false, error: "Already used" });
 
     const updated = await prisma.guest.update({
       where: { token },
@@ -71,9 +82,52 @@ router.post("/json/use", async (req, res) => {
   }
 });
 
+/**
+ * @route POST /verify/json/use-with-pin
+ * @desc Mark QR token as used but requires a gate PIN for verification
+ */
+router.post("/json/use-with-pin", async (req, res) => {
+  try {
+    const { token, pin } = req.body;
+
+    if (!token || !pin)
+      return res.status(400).json({ ok: false, error: "Missing token or PIN" });
+
+    // 🔐 PIN check (set in your .env file, e.g. GATE_PIN=1234)
+    if (pin !== process.env.GATE_PIN)
+      return res.status(403).json({ ok: false, error: "Invalid PIN" });
+
+    const guest = await prisma.guest.findUnique({ where: { token } });
+    if (!guest)
+      return res.status(404).json({ ok: false, error: "Invalid QR code" });
+
+    if (guest.status === "USED")
+      return res.status(409).json({ ok: false, error: "Already used" });
+
+    const updated = await prisma.guest.update({
+      where: { token },
+      data: { status: "USED", usedAt: new Date(), usedBy: "gate-pin" },
+    });
+
+    return res.json({
+      ok: true,
+      message: "Guest admitted via gate PIN",
+      guest: {
+        guestName: updated.guestName,
+        usedAt: updated.usedAt,
+        status: updated.status,
+      },
+    });
+  } catch (e) {
+    console.error("verify-json/use-with-pin failed:", e);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 /* ============================================================
    ✅ HTML VERIFY ROUTE (when QR is scanned by smartphone camera)
    ============================================================ */
+
 router.get("/:token", async (req, res) => {
   res.set("Cache-Control", "no-store");
 
@@ -116,33 +170,12 @@ router.get("/:token", async (req, res) => {
     // Mark as used if ?mark=1
     if (mark === "1") {
       const usedBy = (req.user && req.user.email) || "web-verify";
-      const updated = await prisma.guest.updateMany({
-        where: { token, status: "UNUSED" },
+
+      // safer since token is unique
+      const updated = await prisma.guest.update({
+        where: { token },
         data: { status: "USED", usedAt: new Date(), usedBy },
       });
-
-      if (updated.count === 0) {
-        const refreshed = await prisma.guest.findUnique({
-          where: { token },
-          include: { student: true },
-        });
-
-        return sendHtml(
-          res,
-          200,
-          htmlPage(
-            "Already Used ❌",
-            detailsBlock(refreshed || guest) +
-              `<div style="margin-top:8px;color:#64748b;font-size:14px">
-                 Already used${
-                   refreshed?.usedAt
-                     ? ` at ${new Date(refreshed.usedAt).toLocaleString()}`
-                     : ""
-                 }.
-               </div>`
-          )
-        );
-      }
 
       const done = await prisma.guest.findUnique({
         where: { token },
@@ -184,8 +217,6 @@ router.get("/:token", async (req, res) => {
     sendHtml(res, 500, htmlPage("Server Error", "Please try again later."));
   }
 });
-
-export default router;
 
 /* ============================================================
    ✅ Helper Functions
@@ -251,3 +282,5 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
+
+export default router;
