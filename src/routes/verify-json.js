@@ -1,117 +1,120 @@
 // server/src/routes/verify-json.js
 import express from "express";
-import { prisma } from "../db.js";
+import { fb } from "../firebase.js"; // Firestore connection
 import { requireAdmin } from "../middleware/requireAdmin.js";
 
 const router = express.Router();
 
-// public check: no auth required
+/**
+ * 🔹 PUBLIC: Verify QR token
+ * Body: { token }
+ * Response: { ok, status, guest, student, usedAt, usedBy }
+ */
 router.post("/check", async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
     if (!token)
       return res.status(400).json({ ok: false, error: "token required" });
 
-    const g = await prisma.guest.findUnique({
-      where: { token },
-      include: { student: true },
-    });
-    if (!g) return res.status(404).json({ ok: false, error: "Invalid token" });
+    const doc = await fb.db.collection("invites").doc(token).get();
+    if (!doc.exists)
+      return res.status(404).json({ ok: false, error: "Invalid token" });
+
+    const invite = doc.data();
 
     return res.json({
       ok: true,
-      status: g.status,
-      guest: { guestName: g.guestName, phone: g.phone },
-      student: g.student
-        ? { studentName: g.student.studentName, matricNo: g.student.matricNo }
-        : null,
-      usedAt: g.usedAt,
-      usedBy: g.usedBy || null,
+      status: invite.status,
+      guest: invite.guest,
+      student: invite.student,
+      usedAt: invite.usedAt || null,
+      usedBy: invite.usedBy || null,
     });
   } catch (err) {
-    console.error("/verify-json/check err:", err);
+    console.error("/verify-json/check error:", err);
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
-// admin-only use (keeps previous behavior)
+/**
+ * 🔹 ADMIN: Mark a token as USED (requires admin auth)
+ * Body: { token }
+ */
 router.post("/use", requireAdmin, async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
     if (!token)
       return res.status(400).json({ ok: false, error: "token required" });
 
+    const docRef = fb.db.collection("invites").doc(token);
+    const doc = await docRef.get();
+
+    if (!doc.exists)
+      return res.status(404).json({ ok: false, error: "Token not found" });
+
+    const invite = doc.data();
+
+    if (invite.status === "USED")
+      return res.json({ ok: false, error: "Already used", invite });
+
     const email = req.user?.email || "admin";
-    const updated = await prisma.guest.updateMany({
-      where: { token, status: "UNUSED" },
-      data: { status: "USED", usedAt: new Date(), usedBy: email },
+
+    await docRef.update({
+      status: "USED",
+      usedAt: fb.FieldValue.serverTimestamp(),
+      usedBy: email,
     });
 
-    if (updated.count === 0) {
-      const g = await prisma.guest.findUnique({
-        where: { token },
-        include: { student: true },
-      });
-      if (!g)
-        return res.status(404).json({ ok: false, error: "Token not found" });
-      return res.json({ ok: false, error: "Already used", guest: g });
-    }
-
-    const g = await prisma.guest.findUnique({
-      where: { token },
-      include: { student: true },
-    });
-    return res.json({ ok: true, guest: g });
+    return res.json({ ok: true, message: "Invite marked as USED" });
   } catch (err) {
-    console.error("/verify-json/use err:", err);
+    console.error("/verify-json/use error:", err);
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
 /**
- * Public admit via PIN (for gate staff)
+ * 🔹 PUBLIC: Admit via PIN (for event gate staff)
  * Body: { token, pin }
- * PIN must match env VERIFY_ADMIT_PIN (simple approach)
  */
 router.post("/use-with-pin", async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
     const pin = String(req.body?.pin || "").trim();
-    const expected = process.env.VERIFY_ADMIT_PIN || "";
+    const expectedPin = process.env.VERIFY_ADMIT_PIN || "";
 
     if (!token || !pin)
       return res
         .status(400)
         .json({ ok: false, error: "token and pin required" });
-    if (!expected)
+
+    if (!expectedPin)
       return res
         .status(500)
-        .json({ ok: false, error: "Server not configured for PIN admit" });
-    if (pin !== expected)
+        .json({ ok: false, error: "PIN not configured on server" });
+
+    if (pin !== expectedPin)
       return res.status(403).json({ ok: false, error: "Invalid PIN" });
 
-    const updated = await prisma.guest.updateMany({
-      where: { token, status: "UNUSED" },
-      data: { status: "USED", usedAt: new Date(), usedBy: `pin:${pin}` },
+    const docRef = fb.db.collection("invites").doc(token);
+    const doc = await docRef.get();
+
+    if (!doc.exists)
+      return res.status(404).json({ ok: false, error: "Token not found" });
+
+    const invite = doc.data();
+
+    if (invite.status === "USED")
+      return res.json({ ok: false, error: "Already used", invite });
+
+    await docRef.update({
+      status: "USED",
+      usedAt: fb.FieldValue.serverTimestamp(),
+      usedBy: `pin:${pin}`,
     });
 
-    if (updated.count === 0) {
-      const g = await prisma.guest.findUnique({
-        where: { token },
-        include: { student: true },
-      });
-      if (!g)
-        return res.status(404).json({ ok: false, error: "Token not found" });
-      return res.json({ ok: false, error: "Already used", guest: g });
-    }
-
-    const g = await prisma.guest.findUnique({
-      where: { token },
-      include: { student: true },
-    });
-    return res.json({ ok: true, guest: g });
+    return res.json({ ok: true, message: "Invite marked as USED", invite });
   } catch (err) {
-    console.error("/verify-json/use-with-pin err:", err);
+    console.error("/verify-json/use-with-pin error:", err);
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
