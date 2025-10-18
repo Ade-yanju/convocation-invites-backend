@@ -1,3 +1,4 @@
+// generateInvitePdf.js
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import fs from "fs";
@@ -101,7 +102,7 @@ export async function generateInvitePdf(guest, student, token) {
   );
 
   // ===== QR Code =====
-  const verifyUrl = `https://yourdomain.com/verify/${encodeURIComponent(
+  const verifyUrl = `https://convocation-invites.vercel.app/verify/${encodeURIComponent(
     token
   )}`;
   const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
