@@ -33,13 +33,13 @@ export async function createInvites(req, res) {
         error: "student.matricNo and student.studentName are required.",
       });
     }
+
     if (!Array.isArray(guests) || guests.length === 0) {
       return res
         .status(400)
         .json({ ok: false, error: "At least one guest is required." });
     }
 
-    // Upsert student
     const studentRef = fb.db.collection("students").doc(student.matricNo);
     await studentRef.set(
       {
@@ -51,7 +51,6 @@ export async function createInvites(req, res) {
       { merge: true }
     );
 
-    // Meta info
     const meta = config.EVENT || {
       title: "Dominion University Convocation 2025",
       date: "September 13, 2025",
@@ -65,9 +64,10 @@ export async function createInvites(req, res) {
     for (const g of guests) {
       if (!g?.guestName || !g?.phone) continue;
 
+      // 🔑 Generate token
       const token = nano();
 
-      // Generate invite PDF (includes QR)
+      // 🧾 Generate invite PDF (includes QR)
       const pdfBuf = await buildInvitePDFBuffer({
         student,
         guest: g,
@@ -79,38 +79,41 @@ export async function createInvites(req, res) {
       const safeGuest = g.guestName.replace(/[^a-z0-9]+/gi, "_");
       const filename = `Invite_${student.matricNo}_${safeGuest}.pdf`;
 
-      // Upload to Cloudinary
+      // ☁️ Upload to Cloudinary
       const saved = await saveBufferToStorage(pdfBuf, filename);
 
-      // Save to Firestore
-      const invite = {
+      // 🔥 Save to Firestore (auto-verifiable!)
+      const inviteData = {
+        guestName: g.guestName,
+        studentName: student.studentName,
+        matricNo: student.matricNo,
+        phone: g.phone,
         token,
         status: "UNUSED",
-        student,
-        guest,
-        filename: saved.filename,
-        publicUrl: saved.publicUrl,
-        cloudinaryId: saved.storageId || null,
-        createdAt: fb.FieldValue.serverTimestamp(),
-        sentAt: fb.FieldValue.serverTimestamp(),
+        usedAt: null,
+        usedBy: null,
+        pdfUrl: saved.publicUrl,
+        createdAt: new Date().toISOString(),
       };
-      await fb.db.collection("invites").doc(token).set(invite);
 
-      const phoneE164 = toE164(invite.guest.phone, config.DEFAULT_COUNTRY);
+      await fb.db.collection("guests").doc(token).set(inviteData);
+
+      // 💬 WhatsApp message
+      const phoneE164 = toE164(g.phone, config.DEFAULT_COUNTRY);
       const waMsg = messageTemplate({
-        guestName: invite.guest.guestName,
-        publicUrl: invite.publicUrl,
+        guestName: g.guestName,
+        publicUrl: saved.publicUrl,
       });
       const whatsappLink = phoneE164 ? waManualLink(phoneE164, waMsg) : "";
 
       results.push({
         id: token,
-        guestName: invite.guest.guestName,
-        phone: invite.guest.phone,
-        filename: invite.filename,
-        publicUrl: invite.publicUrl,
+        guestName: g.guestName,
+        phone: g.phone,
+        filename,
+        publicUrl: saved.publicUrl,
         whatsappLink,
-        status: invite.status,
+        status: "UNUSED",
       });
     }
 

@@ -16,7 +16,12 @@ export async function generateInvitePdf(guest, student, token) {
     }
 
     // Remove any non-safe characters (in case of copy/paste or extra slash)
-    const cleanToken = token.replace(/[^a-zA-Z0-9-_]/g, "").trim();
+    const cleanToken = token
+      .toString()
+      .normalize("NFKD") // remove Unicode accents
+      .replace(/[^\w-]/g, "") // allow only letters, numbers, underscore, hyphen
+      .substring(0, 120) // keep safe length
+      .trim();
 
     console.log("🪪 Generating QR for token:", cleanToken);
 
