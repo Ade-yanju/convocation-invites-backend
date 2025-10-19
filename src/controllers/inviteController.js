@@ -40,6 +40,7 @@ export async function createInvites(req, res) {
         .json({ ok: false, error: "At least one guest is required." });
     }
 
+    // 🔥 Create / update student profile in Firestore
     const studentRef = fb.db.collection("students").doc(student.matricNo);
     await studentRef.set(
       {
@@ -51,7 +52,7 @@ export async function createInvites(req, res) {
       { merge: true }
     );
 
-    const meta = config.EVENT || {
+    const eventInfo = config.EVENT || {
       title: "Dominion University Convocation 2025",
       date: "September 13, 2025",
       time: "10:00 AM",
@@ -64,39 +65,39 @@ export async function createInvites(req, res) {
     for (const g of guests) {
       if (!g?.guestName || !g?.phone) continue;
 
-      // 🔑 Generate token
+      // 🪪 Generate unique token
       const token = nano();
 
-      // 🧾 Generate invite PDF (includes QR)
+      // 🧾 Generate invite PDF with embedded QR
       const pdfBuf = await buildInvitePDFBuffer({
         student,
         guest: g,
-        meta,
+        meta: eventInfo,
         token,
-        event: meta,
       });
 
       const safeGuest = g.guestName.replace(/[^a-z0-9]+/gi, "_");
       const filename = `Invite_${student.matricNo}_${safeGuest}.pdf`;
 
-      // ☁️ Upload to Cloudinary
+      // ☁️ Upload the PDF to storage (e.g. Cloudinary / Firebase)
       const saved = await saveBufferToStorage(pdfBuf, filename);
 
-      // 🔥 Save to Firestore (auto-verifiable!)
+      // 🔥 Store the invite in Firestore
       const inviteData = {
+        token,
         guestName: g.guestName,
+        guestPhone: g.phone,
         studentName: student.studentName,
         matricNo: student.matricNo,
-        phone: g.phone,
-        token,
+        pdfUrl: saved.publicUrl,
+        verifyUrl: `https://convocation-invites.vercel.app/verify/${token}`,
         status: "UNUSED",
+        createdAt: fb.FieldValue.serverTimestamp(),
         usedAt: null,
         usedBy: null,
-        pdfUrl: saved.publicUrl,
-        createdAt: new Date().toISOString(),
       };
 
-      await fb.db.collection("guests").doc(token).set(inviteData);
+      await fb.db.collection("invites").doc(token).set(inviteData);
 
       // 💬 WhatsApp message
       const phoneE164 = toE164(g.phone, config.DEFAULT_COUNTRY);
@@ -120,8 +121,9 @@ export async function createInvites(req, res) {
     res.json({ ok: true, files: results });
   } catch (e) {
     console.error("❌ Invite creation failed:", e);
-    res
-      .status(500)
-      .json({ ok: false, error: e.message || "Failed to create PDF invite" });
+    res.status(500).json({
+      ok: false,
+      error: e.message || "Failed to create PDF invite",
+    });
   }
 }
