@@ -1,13 +1,5 @@
 import express from "express";
-import { db } from "../firebase.js"; // ✅ Make sure you have firebase.js configured
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  updateDoc,
-  doc,
-} from "firebase/firestore";
+import { fb } from "../firebase.js"; // ✅ Use fb, not db
 
 const router = express.Router();
 
@@ -17,7 +9,7 @@ const router = express.Router();
 
 /**
  * @route POST /verify/json/check
- * @desc Check if QR token is valid and return guest info
+ * @desc Check if QR token is valid and return invite info
  */
 router.post("/json/check", async (req, res) => {
   try {
@@ -25,26 +17,24 @@ router.post("/json/check", async (req, res) => {
     if (!token)
       return res.status(400).json({ ok: false, error: "Missing token" });
 
-    // 🔥 Firestore lookup
-    const q = query(collection(db, "guests"), where("token", "==", token));
-    const snapshot = await getDocs(q);
+    const docRef = fb.db.collection("invites").doc(token);
+    const docSnap = await docRef.get();
 
-    if (snapshot.empty)
+    if (!docSnap.exists)
       return res.status(404).json({ ok: false, error: "Invalid QR code" });
 
-    const guestDoc = snapshot.docs[0];
-    const guest = guestDoc.data();
+    const invite = docSnap.data();
 
     return res.json({
       ok: true,
-      guest: {
-        guestName: guest.guestName,
-        studentName: guest.studentName,
-        matricNo: guest.matricNo,
-        phone: guest.phone,
-        status: guest.status,
-        usedAt: guest.usedAt,
-        usedBy: guest.usedBy,
+      invite: {
+        guestName: invite.guestName,
+        studentName: invite.studentName,
+        matricNo: invite.matricNo,
+        guestPhone: invite.guestPhone,
+        status: invite.status,
+        usedAt: invite.usedAt,
+        usedBy: invite.usedBy,
       },
     });
   } catch (e) {
@@ -63,31 +53,26 @@ router.post("/json/use", async (req, res) => {
     if (!token)
       return res.status(400).json({ ok: false, error: "Missing token" });
 
-    const q = query(collection(db, "guests"), where("token", "==", token));
-    const snapshot = await getDocs(q);
-    if (snapshot.empty)
+    const ref = fb.db.collection("invites").doc(token);
+    const snap = await ref.get();
+    if (!snap.exists)
       return res.status(404).json({ ok: false, error: "Invalid QR code" });
 
-    const guestDoc = snapshot.docs[0];
-    const ref = doc(db, "guests", guestDoc.id);
-    const guest = guestDoc.data();
+    const invite = snap.data();
 
-    if (guest.status === "USED")
+    if (invite.status === "USED")
       return res.status(409).json({ ok: false, error: "Already used" });
 
-    await updateDoc(ref, {
-      status: "USED",
-      usedAt: new Date().toISOString(),
-      usedBy: "scanner",
-    });
+    const usedAt = new Date().toISOString();
+    await ref.update({ status: "USED", usedAt, usedBy: "scanner" });
 
     return res.json({
       ok: true,
       message: "Guest admitted",
-      guest: {
-        guestName: guest.guestName,
+      invite: {
+        guestName: invite.guestName,
         status: "USED",
-        usedAt: new Date().toISOString(),
+        usedAt,
       },
     });
   } catch (e) {
@@ -109,30 +94,25 @@ router.post("/json/use-with-pin", async (req, res) => {
     if (pin !== process.env.GATE_PIN)
       return res.status(403).json({ ok: false, error: "Invalid PIN" });
 
-    const q = query(collection(db, "guests"), where("token", "==", token));
-    const snapshot = await getDocs(q);
-    if (snapshot.empty)
+    const ref = fb.db.collection("invites").doc(token);
+    const snap = await ref.get();
+    if (!snap.exists)
       return res.status(404).json({ ok: false, error: "Invalid QR code" });
 
-    const guestDoc = snapshot.docs[0];
-    const ref = doc(db, "guests", guestDoc.id);
-    const guest = guestDoc.data();
+    const invite = snap.data();
 
-    if (guest.status === "USED")
+    if (invite.status === "USED")
       return res.status(409).json({ ok: false, error: "Already used" });
 
-    await updateDoc(ref, {
-      status: "USED",
-      usedAt: new Date().toISOString(),
-      usedBy: "gate-pin",
-    });
+    const usedAt = new Date().toISOString();
+    await ref.update({ status: "USED", usedAt, usedBy: "gate-pin" });
 
     return res.json({
       ok: true,
       message: "Guest admitted via gate PIN",
-      guest: {
-        guestName: guest.guestName,
-        usedAt: new Date().toISOString(),
+      invite: {
+        guestName: invite.guestName,
+        usedAt,
         status: "USED",
       },
     });
@@ -155,30 +135,28 @@ router.get("/:token", async (req, res) => {
     if (!token)
       return sendHtml(res, 400, htmlPage("Invalid QR", "No token provided."));
 
-    const q = query(collection(db, "guests"), where("token", "==", token));
-    const snapshot = await getDocs(q);
+    const ref = fb.db.collection("invites").doc(token);
+    const snap = await ref.get();
 
-    if (snapshot.empty)
+    if (!snap.exists)
       return sendHtml(
         res,
         404,
         htmlPage("Invalid QR", "This code is not recognized.")
       );
 
-    const guestDoc = snapshot.docs[0];
-    const guest = guestDoc.data();
-    const ref = doc(db, "guests", guestDoc.id);
+    const invite = snap.data();
 
     // If already used
-    if (guest.status === "USED" && mark !== "1") {
+    if (invite.status === "USED" && mark !== "1") {
       return sendHtml(
         res,
         200,
         htmlPage(
           "Already Used ❌",
-          detailsBlock(guest) +
+          detailsBlock(invite) +
             `<div style="margin-top:8px;color:#64748b;font-size:14px">
-              Used at: ${guest.usedAt || ""}
+              Used at: ${invite.usedAt || ""}
             </div>`
         )
       );
@@ -186,25 +164,18 @@ router.get("/:token", async (req, res) => {
 
     // Mark as used if ?mark=1
     if (mark === "1") {
-      await updateDoc(ref, {
-        status: "USED",
-        usedAt: new Date().toISOString(),
-        usedBy: "web-verify",
-      });
+      const usedAt = new Date().toISOString();
+      await ref.update({ status: "USED", usedAt, usedBy: "web-verify" });
+      const updatedInvite = { ...invite, status: "USED", usedAt };
 
-      const updatedGuest = {
-        ...guest,
-        status: "USED",
-        usedAt: new Date().toISOString(),
-      };
       return sendHtml(
         res,
         200,
         htmlPage(
           "Admitted ✅",
-          detailsBlock(updatedGuest) +
+          detailsBlock(updatedInvite) +
             `<div style="margin-top:8px;color:#64748b;font-size:14px">
-              Marked used at: ${updatedGuest.usedAt}
+              Marked used at: ${usedAt}
             </div>`
         )
       );
@@ -216,9 +187,9 @@ router.get("/:token", async (req, res) => {
       200,
       htmlPage(
         "Valid Code ✅",
-        detailsBlock(guest) +
+        detailsBlock(invite) +
           `<div style="margin-top:14px;text-align:center">
-             <a href="/verify/${guest.token}?mark=1"
+             <a href="/verify/${invite.token}?mark=1"
                 style="display:inline-block;padding:12px 20px;background:#0B2E4E;color:#fff;border-radius:10px;text-decoration:none;font-weight:800">
                 Admit & Mark Used
              </a>
@@ -235,15 +206,15 @@ router.get("/:token", async (req, res) => {
    ✅ Helper Functions
    ============================================================ */
 
-function detailsBlock(guest) {
-  if (!guest) return `<div>Record not found.</div>`;
+function detailsBlock(invite) {
+  if (!invite) return `<div>Record not found.</div>`;
   return `
     <div style="margin-top:10px;font-size:16px;line-height:1.6">
-      <div><b>Guest:</b> ${escapeHtml(guest.guestName || "-")}</div>
-      <div><b>Student:</b> ${escapeHtml(guest.studentName || "-")}</div>
-      <div><b>Matric No:</b> ${escapeHtml(guest.matricNo || "-")}</div>
+      <div><b>Guest:</b> ${escapeHtml(invite.guestName || "-")}</div>
+      <div><b>Student:</b> ${escapeHtml(invite.studentName || "-")}</div>
+      <div><b>Matric No:</b> ${escapeHtml(invite.matricNo || "-")}</div>
       <div><b>Status:</b> ${
-        guest.status === "USED"
+        invite.status === "USED"
           ? `<span style="color:#dc2626;font-weight:800">USED</span>`
           : `<span style="color:#16a34a;font-weight:800">UNUSED</span>`
       }</div>

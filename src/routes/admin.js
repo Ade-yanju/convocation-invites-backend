@@ -1,6 +1,6 @@
 // server/src/routes/admin.js
 import express from "express";
-import { generateInvitePdfBuffer } from "../utils/generatePdf.js";
+import { generateInvitePdf } from "../utils/generatePdf.js";
 import uploadBufferToCloudinary from "../cloudinary.js";
 
 const router = express.Router();
