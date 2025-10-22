@@ -1,48 +1,42 @@
-// server/src/utils/generateInvitePdf.js
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { v2 as cloudinary } from "cloudinary";
-import { fb } from "./firebase.js"; // <-- fixed import path
+import { fb } from "../firebase.js";
 import path from "path";
 import os from "os";
 import fs from "fs";
 
 /**
- * Generate invite PDF and store metadata in Firestore
+ * ✅ Generates the guest invite PDF with embedded QR code
  */
 export async function generateInvitePdf(guest = {}, student = {}, token) {
   if (!token || typeof token !== "string") {
     throw new Error("❌ Invalid token provided to generateInvitePdf()");
   }
 
-  // 🔹 Clean token for Firestore (no illegal characters)
-  const cleanToken = token
-    .toString()
-    .trim()
-    .replace(/[^A-Za-z0-9_-]/g, "");
+  // ✅ Clean Firestore-safe token
+  const cleanToken = token.trim().replace(/[^A-Za-z0-9_-]/g, "");
 
-  const verifyUrl = `https://convocation-invites.vercel.app/public-verify/${cleanToken}`;
+  // ✅ QR verification URL (match your frontend page)
+  const verifyUrl = `https://duqrinvitesevents.vercel.app/public-verify/${cleanToken}`;
 
-  // 🔹 Generate QR Code
+  // ✅ Generate QR Code from verify URL
   const qrDataUrl = await QRCode.toDataURL(verifyUrl, {
     width: 300,
     margin: 1,
   });
-  const qrBase64 = qrDataUrl.split(",")[1];
-  const qrBuffer = Buffer.from(qrBase64, "base64");
+  const qrBuffer = Buffer.from(qrDataUrl.split(",")[1], "base64");
 
-  // 🔹 Create a temporary folder
+  // Temporary PDF path
   const tmpDir = path.join(os.tmpdir(), "invites");
   fs.mkdirSync(tmpDir, { recursive: true });
-  const filename = `${cleanToken}.pdf`;
-  const pdfPath = path.join(tmpDir, filename);
+  const pdfPath = path.join(tmpDir, `${cleanToken}.pdf`);
 
-  // 🔹 Start PDF document
+  // Build PDF
   const doc = new PDFDocument({ size: "A5", layout: "landscape", margin: 0 });
   const stream = fs.createWriteStream(pdfPath);
   doc.pipe(stream);
 
-  // ---- DESIGN START ----
   const purple = "#4B0082";
   const gold = "#D4AF37";
   const white = "#FFFFFF";
@@ -54,7 +48,7 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
   doc.fontSize(20).fillColor(white).text("DOMINION UNIVERSITY", 40, 40);
   doc.fontSize(12).text("IBADAN", 40, 65);
 
-  // Circle emblem
+  // Logo circle
   doc
     .circle(doc.page.width - 90, 80, 50)
     .lineWidth(4)
@@ -65,7 +59,7 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
     .fillColor(gold)
     .text("🦁", doc.page.width - 120, 45);
 
-  // Center Seal
+  // Center seal
   const centerX = doc.page.width / 2;
   const centerY = doc.page.height / 2 - 10;
   doc.circle(centerX, centerY, 60).fill(gold);
@@ -76,7 +70,7 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
   doc.fontSize(12).text("CONVOCATION", centerX - 60, centerY + 15);
   doc.text("CEREMONY", centerX - 40, centerY + 30);
 
-  // Info Box
+  // Info box
   const boxX = 40,
     boxY = doc.page.height - 150,
     boxW = doc.page.width - 80,
@@ -96,13 +90,12 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
       `This is to invite ${guest.guestName || "Guest"}`,
       boxX + 20,
       boxY + 35
-    );
-  doc.text(
-    `as a guest to the 3rd Convocation Ceremony of Dominion University, Ibadan.`,
-    boxX + 20,
-    boxY + 50
-  );
-  doc
+    )
+    .text(
+      `as a guest to the 3rd Convocation Ceremony of Dominion University, Ibadan.`,
+      boxX + 20,
+      boxY + 50
+    )
     .fontSize(10)
     .fillColor("#333")
     .text(
@@ -113,7 +106,7 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
       boxY + 70
     );
 
-  // Add QR Code
+  // QR Code
   doc.image(qrBuffer, doc.page.width - 150, boxY - 20, { fit: [90, 90] });
   doc
     .fontSize(8)
@@ -124,37 +117,34 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
   doc
     .fontSize(10)
     .fillColor(white)
-    .text("Convocation of The Eagle Set", centerX - 90, doc.page.height - 30);
-  doc.text("October 21–26, 2025", centerX - 60, doc.page.height - 45);
+    .text("Convocation of The Eagle Set", centerX - 90, doc.page.height - 30)
+    .text("October 21–26, 2025", centerX - 60, doc.page.height - 45);
 
   doc.end();
   await new Promise((resolve) => stream.on("finish", resolve));
-  // ---- DESIGN END ----
 
-  // 🔹 Upload to Cloudinary
+  // Upload to Cloudinary
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
 
-  const res = await cloudinary.uploader.upload(pdfPath, {
+  const upload = await cloudinary.uploader.upload(pdfPath, {
     folder: "convocation_invites",
     resource_type: "raw",
     public_id: cleanToken,
     overwrite: true,
   });
 
-  const pdfUrl = res.secure_url;
-
-  // 🔹 Save to Firestore
+  // Firestore record
   const inviteData = {
     token: cleanToken,
     guestName: guest.guestName || "",
     guestPhone: guest.phone || "",
     studentName: student.studentName || "",
     matricNo: student.matricNo || "",
-    pdfUrl,
+    pdfUrl: upload.secure_url,
     verifyUrl,
     status: "UNUSED",
     createdAt: fb.FieldValue.serverTimestamp(),
@@ -162,22 +152,14 @@ export async function generateInvitePdf(guest = {}, student = {}, token) {
     usedBy: null,
   };
 
-  try {
-    await fb.db.collection("invites").doc(cleanToken).set(inviteData);
-    console.log(`✅ Invite stored in Firestore: ${cleanToken}`);
-  } catch (err) {
-    console.error("❌ Failed to store invite in Firestore:", err.message);
-    throw err;
-  }
+  await fb.db.collection("invites").doc(cleanToken).set(inviteData);
+  console.log(`✅ Invite stored in Firestore: ${cleanToken}`);
 
-  // 🔹 Clean up temp file
   try {
     fs.unlinkSync(pdfPath);
-  } catch (e) {
-    console.warn("⚠️ Could not delete temp file:", e.message);
-  }
+  } catch {}
 
-  return { ok: true, token: cleanToken, pdfUrl, verifyUrl };
+  return { ok: true, token: cleanToken, pdfUrl: upload.secure_url, verifyUrl };
 }
 
 export default generateInvitePdf;
