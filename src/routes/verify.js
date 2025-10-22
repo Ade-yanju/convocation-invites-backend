@@ -9,7 +9,6 @@ const router = express.Router();
 function sanitizeToken(raw) {
   const token = decodeURIComponent(String(raw || "")).trim();
   if (!token || token.length < 3) return null;
-  // Firestore-safe: must only contain A-Z, a-z, 0-9, underscore, hyphen
   if (!/^[A-Za-z0-9_-]+$/.test(token)) return null;
   return token;
 }
@@ -80,10 +79,14 @@ function detailsBlock(invite) {
 router.post("/json/check", async (req, res) => {
   try {
     const token = sanitizeToken(req.body.token);
-    if (!token) return res.status(400).json({ ok: false, error: "Invalid or missing token" });
+    if (!token)
+      return res
+        .status(400)
+        .json({ ok: false, error: "Invalid or missing token" });
 
     const doc = await fb.db.collection("invites").doc(token).get();
-    if (!doc.exists) return res.status(404).json({ ok: false, error: "Invalid QR code" });
+    if (!doc.exists)
+      return res.status(404).json({ ok: false, error: "Invalid QR code" });
 
     const invite = doc.data();
     return res.json({
@@ -105,30 +108,35 @@ router.post("/json/check", async (req, res) => {
 });
 
 // 🔹 Mark as USED via scanner app
+// ✅ POST /verify/json/use
 router.post("/json/use", async (req, res) => {
   try {
-    const token = sanitizeToken(req.body.token);
-    if (!token) return res.status(400).json({ ok: false, error: "Invalid or missing token" });
+    const token = req.body.token?.trim();
+    if (!token) {
+      return res.status(400).json({ ok: false, error: "Missing token" });
+    }
 
     const ref = fb.db.collection("invites").doc(token);
     const snap = await ref.get();
-    if (!snap.exists) return res.status(404).json({ ok: false, error: "Invalid QR code" });
+
+    if (!snap.exists)
+      return res.status(404).json({ ok: false, error: "Invalid QR code" });
 
     const invite = snap.data();
     if (invite.status === "USED")
       return res.status(409).json({ ok: false, error: "Already used" });
 
     const usedAt = new Date().toISOString();
-    await ref.update({ status: "USED", usedAt, usedBy: "scanner" });
+    await ref.update({ status: "USED", usedAt, usedBy: "public-web" });
 
-    return res.json({
+    res.json({
       ok: true,
       message: "Guest admitted successfully",
-      invite: { guestName: invite.guestName, status: "USED", usedAt },
+      invite: { ...invite, status: "USED", usedAt },
     });
-  } catch (e) {
-    console.error("verify-json/use failed:", e);
-    return res.status(500).json({ ok: false, error: "Internal server error" });
+  } catch (err) {
+    console.error("verify-json/use failed:", err);
+    res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
 
@@ -183,7 +191,11 @@ router.get("/:token", async (req, res) => {
     const ref = fb.db.collection("invites").doc(token);
     const snap = await ref.get();
     if (!snap.exists)
-      return sendHtml(res, 404, htmlPage("Invalid QR", "This code is not recognized."));
+      return sendHtml(
+        res,
+        404,
+        htmlPage("Invalid QR", "This code is not recognized.")
+      );
 
     const invite = snap.data();
 
@@ -238,7 +250,11 @@ router.get("/:token", async (req, res) => {
     );
   } catch (e) {
     console.error("HTML verify failed:", e);
-    return sendHtml(res, 500, htmlPage("Server Error", "Please try again later."));
+    return sendHtml(
+      res,
+      500,
+      htmlPage("Server Error", "Please try again later.")
+    );
   }
 });
 
